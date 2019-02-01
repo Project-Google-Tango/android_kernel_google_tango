@@ -975,8 +975,7 @@ static void __init tegra_ardbeg_late_init(void)
 	ardbeg_display_init();
 	ardbeg_uart_init();
 	ardbeg_usb_init();
-
-	ardbeg_modem_init();
+        ardbeg_modem_init();
 	ardbeg_xusb_init();
 	ardbeg_i2c_init();
 	ardbeg_audio_init();

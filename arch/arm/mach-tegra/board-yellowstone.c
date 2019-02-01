@@ -595,6 +595,9 @@ static void ardbeg_usb_init(void)
 	/* Setup the udc platform data */
 	tegra_udc_device.dev.platform_data = &tegra_udc_pdata;
 
+	tegra_ehci2_device.dev.platform_data = &tegra_ehci2_hsic_baseband_pdata;
+	platform_device_register(&tegra_ehci2_device);
+
 	tegra_ehci3_device.dev.platform_data =
 		 &tegra_ehci3_utmi_pdata;
 	platform_device_register(&tegra_ehci3_device);
@@ -975,7 +978,8 @@ static void __init tegra_ardbeg_late_init(void)
 	ardbeg_display_init();
 	ardbeg_uart_init();
 	ardbeg_usb_init();
-        ardbeg_modem_init();
+	if (!of_machine_is_compatible("nvidia,ardbeg"))
+	ardbeg_modem_init();
 	ardbeg_xusb_init();
 	ardbeg_i2c_init();
 	ardbeg_audio_init();

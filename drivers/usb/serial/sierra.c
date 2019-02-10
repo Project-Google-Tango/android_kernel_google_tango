@@ -17,9 +17,9 @@
   Whom based his on the Keyspan driver by Hugh Blemings <hugh@blemings.org>
 */
 /* Uncomment to log function calls */
-/* #define DEBUG 
+/* #define DEBUG */
 /* Uncomment to force power level set to auto when attaching a device */
-/* #define POWER_LEVEL_AUTO*/
+#define POWER_LEVEL_AUTO
 
 /* Sierra driver for kernel 2.6.35 to kernel-3.0 */
 /* Note: This is 'combined' usb serial driver developed specifically for Android

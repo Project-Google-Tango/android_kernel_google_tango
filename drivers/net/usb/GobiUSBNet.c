@@ -1610,7 +1610,7 @@ fix_dest:
 static const struct driver_info GobiNetInfo_qmi = {
    .description   = "QmiNet Ethernet Device",
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION( 2,6,39 ))
-    .flags         = FLAG_WWAN,
+    .flags         = FLAG_ETHER | FLAG_POINTTOPOINT,
 #else
     .flags         = FLAG_ETHER,
 #endif
@@ -1639,7 +1639,7 @@ static const struct driver_info GobiNetInfo_qmi = {
 static const struct driver_info GobiNetInfo_gobi = {
    .description   = "GobiNet Ethernet Device",
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION( 2,6,39 ))
-    .flags         = FLAG_WWAN,
+    .flags         = FLAG_ETHER | FLAG_POINTTOPOINT,
 #else
     .flags         = FLAG_ETHER,
 #endif
@@ -1666,7 +1666,7 @@ static const struct driver_info GobiNetInfo_gobi = {
 static const struct driver_info GobiNetInfo_9x15 = {
    .description   = "GobiNet Ethernet Device",
  #if (LINUX_VERSION_CODE >= KERNEL_VERSION( 2,6,39 ))
-    .flags         = FLAG_WWAN,
+    .flags         = FLAG_ETHER | FLAG_POINTTOPOINT,
 #else
     .flags         = FLAG_ETHER,
 #endif

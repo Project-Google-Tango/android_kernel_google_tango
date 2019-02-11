@@ -131,6 +131,7 @@ static int is_qmi_gobi_device(struct usb_device *udev)
 {
 	switch (udev->descriptor.idProduct)
 	{
+        case 0x9070: /* EM/MC74xx boot */
         case 0x9071: /* EM/MC74xx app */
         case 0x9040: /* Gobi 5K QDL */
 	    case 0x9041: /* Gobi 5K */

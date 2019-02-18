@@ -3,7 +3,7 @@
 
   Copyright (C) 2006, 2007, 2008  Kevin Lloyd <klloyd@sierrawireless.com>,
 
-  Copyright (C) 2008 - 2016  Elina Pasheva, Matthew Safar, Rory Filer
+  Copyright (C) 2008 - 2011  Elina Pasheva, Matthew Safar, Rory Filer
 			<linux@sierrawireless.com>
 
   IMPORTANT DISCLAIMER: This driver is not commercially supported by
@@ -28,10 +28,9 @@
  * When this driver is used GobiSerial driver must be removed to avoid
  * duplication!
  */
-#define DRIVER_VERSION "v.1.7.44_android_generic_2"
+#define DRIVER_VERSION "v.1.7.42_android_generic_2"
 #define DRIVER_AUTHOR "Kevin Lloyd, Elina Pasheva, Matthew Safar, Rory Filer"
 #define DRIVER_DESC "USB Driver for Sierra Wireless USB modems"
-
 
 #include <linux/version.h>
 #include <linux/kernel.h>
@@ -110,10 +109,7 @@ struct sierra_intf_private {
     /* workaround for upstream commit b2ca699076573c94fee9a73cb0d8645383b602a0 */
     #warning "Assuming disc_mutex is locked external to the module"
     static inline void sierra_lock_disc_mutex(struct usb_serial *serial) {
-        if (LINUX_VERSION_CODE < KERNEL_VERSION( 3,12,0) )
-        {
-            WARN_ON(!mutex_is_locked(&serial->disc_mutex));
-        }
+       WARN_ON(!mutex_is_locked(&serial->disc_mutex));
     }
     static inline void sierra_unlock_disc_mutex(struct usb_serial *serial) {}
     
@@ -121,6 +117,7 @@ struct sierra_intf_private {
     /* use the legacy method of locking disc_mutex in this driver */
     #warning "Using legacy method of locking disc_mutex"
     static inline void sierra_lock_disc_mutex(struct usb_serial *serial) {
+       WARN_ON(mutex_is_locked(&serial->disc_mutex));
        mutex_lock(&serial->disc_mutex);
     }
     
@@ -129,13 +126,11 @@ struct sierra_intf_private {
     }
 #endif
 
+
 static int is_qmi_gobi_device(struct usb_device *udev)
 {
 	switch (udev->descriptor.idProduct)
 	{
-        case 0x9091: /* EM/MC75xx APP*/
-        case 0x9090: /* EM/MC75xx boot */
-        case 0x9070: /* EM/MC74xx boot */
         case 0x9071: /* EM/MC74xx app */
         case 0x9040: /* Gobi 5K QDL */
 	    case 0x9041: /* Gobi 5K */
@@ -183,8 +178,6 @@ static int sierra_vsc_set_nmea(struct usb_device *udev, __u16 enable)
 	/* exclude QMI and Gobi devices */
 	switch (udev->descriptor.idProduct)
 	{
-        case 0x9091: /* EM/MC75xx APP*/
-        case 0x9090: /* EM/MC75xx boot */        
         case 0x9070: /* EM/MC74xx boot */
         case 0x9071: /* EM/MC74xx app */
         case 0x9040: /* Gobi 5K QDL */
@@ -323,8 +316,6 @@ static int is_gps_port_qmi_gobi(struct usb_serial_port *   pPort )
 {
     switch (cpu_to_le16(pPort->serial->dev->descriptor.idProduct))
 	{
-	        case 0x9091: /* EM/MC75xx APP*/
-   	        case 0x90B1: /* EM/MC75xx APP*/
 	        case 0x9071: /* EM/MC74xx app */
 	        case 0x9041:  /* Gobi 5K */
 	        case 0x68C0:  /* Gobi 5K */
@@ -347,22 +338,6 @@ static int is_gps_port_qmi_gobi(struct usb_serial_port *   pPort )
 	}
 	return 0;
 }
-
-static int is_gps_port_directip(struct usb_serial_port *   pPort )
-{
-    switch (pPort->serial->dev->descriptor.idProduct)
-    {
-    case 0x68A3:  
-        if (pPort->serial->interface->cur_altsetting->desc.bInterfaceNumber == 2)
-	        return 1;
-	break;
-    default:
-        return 0;
-	break;
-    }
-    return 0;
-}
-
 static int sierra_probe(struct usb_serial *serial,
 			const struct usb_device_id *id)
 {
@@ -433,23 +408,13 @@ static const struct sierra_iface_info qmi_interface_blacklist = {
 	.ifaceinfo = qmi_non_serial_ifaces,
 };
 
-static const signed char qmi_9x15_non_serial_ifaces[]  = {1,4,8,10,11,19,20}; 
-static const struct sierra_iface_info qmi_9x15_interface_blacklist = {
-	.infolen = ARRAY_SIZE( qmi_9x15_non_serial_ifaces ),
-	.ifaceinfo = qmi_9x15_non_serial_ifaces,
-};
 
 static const signed char qmi_9x30_non_serial_ifaces[]  = {1,4,5,6,8,10,11,12,13};
-static const struct sierra_iface_info qmi_9x30_interface_blacklist = {
+static const struct sierra_iface_info qmi_9x39_interface_blacklist = {
     .infolen = ARRAY_SIZE( qmi_9x30_non_serial_ifaces ),
     .ifaceinfo = qmi_9x30_non_serial_ifaces,
 };
 
-static const signed char qmi_9x50_non_serial_ifaces[]  = {1,5,6,8,10,11,12,13};
-static const struct sierra_iface_info qmi_9x50_interface_blacklist = {
-    .infolen = ARRAY_SIZE( qmi_9x50_non_serial_ifaces ),
-    .ifaceinfo = qmi_9x50_non_serial_ifaces,
-};
 
 static const signed char gobi_non_serial_ifaces[] = { 0 };
 static const struct sierra_iface_info gobi_interface_blacklist = {
@@ -562,7 +527,7 @@ static const struct usb_device_id id_table[] = {
 	},
     
 	{ USB_DEVICE(0x1199, 0x68C0), 
-		.driver_info = (kernel_ulong_t)&qmi_9x15_interface_blacklist
+		.driver_info = (kernel_ulong_t)&qmi_interface_blacklist
 	},		
 	/* Sierra Wireless G3K Boot VID/PID */
 	{ USB_DEVICE(0x1199, 0x9010) },
@@ -599,23 +564,10 @@ static const struct usb_device_id id_table[] = {
     { USB_DEVICE(0x1199, 0x9070) },
     /* 9x30 App  VID/PID */
     { USB_DEVICE(0x1199, 0x9071),
-        .driver_info = (kernel_ulong_t)&qmi_9x30_interface_blacklist
+        .driver_info = (kernel_ulong_t)&qmi_9x39_interface_blacklist
     },
 
-    /* 9x50 Boot VID/PID*/
-    { USB_DEVICE(0x1199, 0x9090) },
-    { USB_DEVICE(0x1199, 0x90B0) },
-    { USB_DEVICE(0x1199, 0x90C0) },
-    /* 9x50 App  VID/PID */
-    { USB_DEVICE(0x1199, 0x9091),
-        .driver_info = (kernel_ulong_t)&qmi_9x50_interface_blacklist
-    },
-    { USB_DEVICE(0x1199, 0x90B1),
-        .driver_info = (kernel_ulong_t)&qmi_9x50_interface_blacklist
-    },
-    { USB_DEVICE(0x1199, 0x90C1),
-        .driver_info = (kernel_ulong_t)&qmi_9x50_interface_blacklist
-    },
+
 
 	{ }
 };
@@ -1231,10 +1183,7 @@ static void sierra_close(struct usb_serial_port *port)
 	struct usb_serial *serial = port->serial;
 	struct sierra_port_private *portdata;
 	struct sierra_intf_private *intfdata = port->serial->private;
-	const unsigned char stopMessage[] = "$GPS_STOP";
-	unsigned char *buf = NULL;
-	int iMessageLen = strlen(stopMessage);
-
+	const char stopMessage[] = "$GPS_STOP";
 	int nResult;
 	int bytesWrote;
 
@@ -1249,28 +1198,18 @@ static void sierra_close(struct usb_serial_port *port)
 	if (serial->dev) {
 		if ((is_gps_port_qmi_gobi(port) == 1))
 		{
-			buf = kmalloc(iMessageLen, GFP_NOIO);
-			memcpy(buf,stopMessage,iMessageLen);
-            
 			usb_autopm_get_interface(serial->interface);
 			/* Send stopMessage , 1s timeout */
 			nResult = usb_bulk_msg( serial->dev,
 							usb_sndbulkpipe( serial->dev,
 							port->bulk_out_endpointAddress),
-							buf,
-							iMessageLen,
+							(void *)&stopMessage[0],
+							sizeof( stopMessage ),
 							&bytesWrote,
 							1000 );
 			usb_autopm_put_interface(serial->interface);
-			kfree(buf);
 			/* TBD analyze return value */
 	}
-       if (is_gps_port_directip(port))
-       {
-           usb_autopm_get_interface(serial->interface);
-           sierra_vsc_set_nmea(serial->dev, 0);
-           usb_autopm_put_interface(serial->interface);
-       }
 		mutex_lock(&serial->disc_mutex);
 		if (!serial->disconnected)
 			sierra_send_setup(port);
@@ -1305,10 +1244,7 @@ static int sierra_open(struct tty_struct *tty, struct usb_serial_port *port)
 	int err;
 	int endpoint;
 	struct urb *urb;
-	const unsigned char startMessage[] = "$GPS_START";
-	unsigned char *buf = NULL;
-	int iMessageLen = strlen(startMessage);
-
+	const char startMessage[] = "$GPS_START";
 	int nResult;
 	int bytesWrote;
 
@@ -1321,28 +1257,18 @@ static int sierra_open(struct tty_struct *tty, struct usb_serial_port *port)
 
 	if (is_gps_port_qmi_gobi(port))
 	{
-		buf = kmalloc(iMessageLen, GFP_NOIO);
-		memcpy(buf,startMessage,iMessageLen);
-
 		usb_autopm_get_interface(serial->interface);
 		/* Send startMessage, 1s timeout */
 		nResult = usb_bulk_msg( serial->dev,
 						usb_sndbulkpipe( serial->dev,
 						port->bulk_out_endpointAddress),
-						buf,
-						iMessageLen,//sizeof( startMessage ),
+						(void *)&startMessage[0],
+						sizeof( startMessage ),
 						&bytesWrote,
 						1000 );
 		usb_autopm_put_interface(serial->interface);
 		/* TBD analyze return value */
-		kfree(buf);
-    }
-    if (is_gps_port_directip(port))
-    {	   
-        usb_autopm_get_interface(serial->interface);
-        sierra_vsc_set_nmea(serial->dev, 1);
-        usb_autopm_put_interface(serial->interface);
-    }
+	}
 
 	endpoint = port->bulk_in_endpointAddress;
 	for (i = 0; i < portdata->num_in_urbs; i++) {
@@ -1528,29 +1454,10 @@ static int sierra_startup(struct usb_serial *serial)
 
 static void sierra_release(struct usb_serial *serial)
 {
-	int i;
-	struct usb_serial_port *port;
 	struct sierra_intf_private *intfdata = serial->private;
 
 	dev_dbg(&serial->dev->dev, "%s\n", __func__);
 
-	if (serial->num_ports > 0) {
-		port = serial->port[0];
-		if (port)
-			/* Note: The entire piece of memory that was allocated 
-			 * in the startup routine can be released by passing
-			 * a pointer to the beginning of the piece.
-			 * This address corresponds to the address of the chunk
-			 * that was given to port 0.
-		 	 */
-			kfree(usb_get_serial_port_data(port));
-	}
-	for (i = 0; i < serial->num_ports; ++i) {
-		port = serial->port[i];
-		if (!port)
-			continue;
-		usb_set_serial_port_data(port, NULL);
-	}
 	kfree(intfdata);
 }
 

@@ -128,31 +128,18 @@ POSSIBILITY OF SUCH DAMAGE.
 #include "QMI.h"
 
 #define MAX_QCQMI 255
-#define SEMI_INIT_DEFAULT_VALUE 0
-#define QMI_CONTROL_MSG_DELAY_MS 100
-
 extern int qcqmi_table[MAX_QCQMI];
-
-//Register State
-enum {
-   eClearCID=0,
-   eClearAndReleaseCID=1,
-   eForceClearAndReleaseCID=2,
-};
 
 /*=========================================================================*/
 // Generic functions
 /*=========================================================================*/
 
 // Basic test to see if device memory is valid
-
-bool IsDeviceDisconnect(sGobiUSBNet *pDev);
+bool IsDeviceValid( sGobiUSBNet * pDev );
 
 #ifdef CONFIG_PM
 bool bIsSuspend(sGobiUSBNet *pGobiDev);
 #endif
-
-void UsbAutopmGetInterface(struct usb_interface * intf);
 
 // Print Hex data, for debug purposes
 void PrintHex(
@@ -179,7 +166,7 @@ bool GobiTestDownReason(
 /*=========================================================================*/
 
 // Resubmit interrupt URB, re-using same values
-int ResubmitIntURB(sGobiUSBNet * pDev, struct urb * pIntURB );
+int ResubmitIntURB( struct urb * pIntURB );
 
 // Read callback
 //    Put the data in storage and notify anyone waiting for data
@@ -206,8 +193,7 @@ int ReadAsync(
    u16                clientID,
    u16                transactionID,
    void               (*pCallback)(sGobiUSBNet *, u16, void *),
-   void *             pData ,
-   int                iSpinLock);
+   void *             pData );
 
 // Notification function for synchronous read
 void UpSem( 
@@ -221,30 +207,13 @@ int ReadSync(
    sGobiUSBNet *    pDev,
    void **            ppOutBuffer,
    u16                clientID,
-   u16                transactionID,
-   int                *iID,
-   struct semaphore   *pReadSem,
-   int                *iIsClosing);
+   u16                transactionID );
 
 // Write callback
 void WriteSyncCallback( struct urb * pWriteURB );
 
 // Start synchronous write
 int WriteSync(
-   sGobiUSBNet *    pDev,
-   char *             pInWriteBuffer,
-   int                size,
-   u16                clientID );
-
-// Start synchronous write without resume device
-int WriteSyncNoResume(
-   sGobiUSBNet *    pDev,
-   char *             pInWriteBuffer,
-   int                size,
-   u16                clientID );
-
-// Start synchronous write no retry
-int WriteSyncNoRetry(
    sGobiUSBNet *    pDev,
    char *             pInWriteBuffer,
    int                size,
@@ -257,13 +226,12 @@ int WriteSyncNoRetry(
 // Create client and allocate memory
 int GetClientID( 
    sGobiUSBNet *      pDev,
-   u8                 serviceType,
-   struct semaphore   *pReadSem);
+   u8                   serviceType );
 
 // Release client and free memory
 bool ReleaseClientID(
    sGobiUSBNet *      pDev,
-   u16                clientID);
+   u16                  clientID );
 
 // Find this client's memory
 sClientMemList * FindClientMem(
@@ -295,15 +263,9 @@ bool AddToNotifyList(
    void                 (* pNotifyFunct)(sGobiUSBNet *, u16, void *),
    void *               pData );
 
-int RemoveAndPopNotifyList(
-   sGobiUSBNet *      pDev,
-   u16              clientID,
-   u16              transactionID ,
-   int              iClearCID);
-
 // Remove first Notify entry from this client's notify list 
 //    and Run function
-int NotifyAndPopNotifyList( 
+bool NotifyAndPopNotifyList( 
    sGobiUSBNet *      pDev,
    u16                  clientID,
    u16                  transactionID );
@@ -383,7 +345,7 @@ void DeregisterQMIDevice( sGobiUSBNet * pDev );
 /*=========================================================================*/
 
 // Check if QMI is ready for use
-int QMIReady(
+bool QMIReady(
    sGobiUSBNet *    pDev,
    u16                timeout );
 
@@ -405,75 +367,8 @@ int QMIDMSGetMEID( sGobiUSBNet * pDev );
 int QMIDMSSWISetFCCAuth( sGobiUSBNet * pDev );
 
 // Register client, send req and parse Data format response, release client
-int QMIWDASetDataFormat( sGobiUSBNet * pDev, int te_flow_control );
+int QMIWDASetDataFormat( sGobiUSBNet * pDev );
 
 // send req and parse Data format response
 int QMICTLSetDataFormat( sGobiUSBNet * pDev );
 
-// Initialize Read Sync tasks semaphore
-void InitSemID(sGobiUSBNet * pDev);
-
-//Release all Read Sync tasks semaphore(s)
-void StopSemID(sGobiUSBNet * pDev);
-
-//Query semaphore slot ID
-int iGetSemID(sGobiUSBNet *pDev,int line);
-/***************************************************************************/
-// wait_ms
-/**************************************************************************/
-void wait_ms(unsigned int ms) ;
-// Userspace Release (synchronous)
-int UserspaceRelease(struct inode *inode, struct file *file);
-// Userspace Lock (synchronous)
-int UserSpaceLock(struct file *filp, int cmd, struct file_lock *fl);
-// sync memory
-void gobi_flush_work(void);
-
-// Close Opened File Inode
-int CloseFileInode(sGobiUSBNet * pDev,int iCount);
-
-// Set modem in specific power save mode
-int SetPowerSaveMode(sGobiUSBNet *pDev,u8 mode);
-
-// config modem qmi wakeup filter
-int ConfigPowerSaveSettings(sGobiUSBNet *pDev, u8 service, u8 indication);
-// Get TID
-u8 QMIXactionIDGet( sGobiUSBNet *pDev);
-// Release Specific Client ID Nofitication From Memory List
-int ReleaseNotifyList(sGobiUSBNet *pDev,u16 clientID,u8 transactionID);
-
-// 
-int Gobi_usb_control_msg(struct usb_device *dev, unsigned int pipe, __u8 request,
-                     __u8 requesttype, __u16 value, __u16 index, void *data,
-                      __u16 size, int timeout);
-
-int AddClientToMemoryList(sGobiUSBNet *pDev,u16 clientID);
-static inline int IsInterfacefDisconnected(struct usb_interface *intf)
-{
-   if(!interface_to_usbdev(intf))
-      return 1;
-   if (interface_to_usbdev(intf)->state == USB_STATE_NOTATTACHED )
-   {
-      return 1;
-   }
-   return 0;
-}
-
-static inline int gobi_usb_autopm_get_interface(struct usb_interface *intf)
-{
-   if(IsInterfacefDisconnected(intf))
-   {
-      return -ENXIO;
-   }
-   return usb_autopm_get_interface(intf);
-}
-void gobi_usb_autopm_put_interface(struct usb_interface *intf);
-void gobi_usb_autopm_get_interface_no_resume(struct usb_interface *intf);
-int gobi_usb_autopm_get_interface_async(struct usb_interface *intf);
-void gobi_usb_autopm_put_interface_async(struct usb_interface *intf);
-
-
-int GobiInitWorkQueue(sGobiUSBNet *pGobiDev);
-void GobiDestoryWorkQueue(sGobiUSBNet *pGobiDev);
-
-void SetTxRxStat(sGobiUSBNet *pGobiDev,int state);

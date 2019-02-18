@@ -76,10 +76,6 @@ ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 POSSIBILITY OF SUCH DAMAGE.
 ===========================================================================*/
 
-/* ===========================================================================
-Reference http://www.spinics.net/lists/linux-usb/msg56457.html
-USB/xhci: Enable remote wakeup for USB3 devices
-===========================================================================*/
 //---------------------------------------------------------------------------
 // Include Files
 //---------------------------------------------------------------------------
@@ -87,33 +83,14 @@ USB/xhci: Enable remote wakeup for USB3 devices
 #include "Structs.h"
 #include "QMIDevice.h"
 #include "QMI.h"
-#ifdef TX_URB_MONITOR
-#include "gobi_usbnet.h"
-#endif
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/module.h>
 #include <net/ip.h>
-#ifdef CONFIG_MEMCG
-#define MEMCG_NOT_FIX
-#ifdef MEMCG_NOT_FIX
-#if (LINUX_VERSION_CODE >= KERNEL_VERSION( 3,13,0 ) &&\
-       LINUX_VERSION_CODE < KERNEL_VERSION( 4,4,0 ))
-#warning "Remove memcontrol.h task_in_memcg_oom warning : replace 'return p->memcg_oom.memcg;' to 'return p->memcg_oom.memcg==NULL ? 0 : 1;' in function task_in_memcg_oom"
-#warning "Commnet '#define MEMCG_NOT_FIX' above after fix applied."
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION( 4,4,0 ) )
-#warning "Remove memcontrol.h task_in_memcg_oom warning : replace 'return p->memcg_in_oom;' to 'return p->memcg_in_oom==NULL ? 0 : 1;' in function task_in_memcg_oom"
-#warning "Commnet '#define MEMCG_NOT_FIX' above after fix applied."
-#endif
-#endif
-#endif
+
 #include <asm/siginfo.h>   //siginfo
 #include <linux/rcupdate.h>   //rcu_read_lock
 #include <linux/sched.h>   //find_task_by_pid_type
-
-
-#include <linux/irq.h>
-#include <net/sch_generic.h>
 
 #ifdef CONFIG_IPV6
 static inline __u8 ipv6_tclass2(const struct ipv6hdr *iph)
@@ -125,24 +102,11 @@ static inline __u8 ipv6_tclass2(const struct ipv6hdr *iph)
 #define BIT_9X15    (31)
 
 //-----------------------------------------------------------------------------
-// Probe device one by one 
-// Must set to "1" for Android
-// Some slow system may wrongly probe int 8 as qcqmi1 and int 10 as qcqmi0
-// It cause data call start on wrong interface and device flag not correctly set by indication
-// DHCP client won't work in this case
-//-----------------------------------------------------------------------------
-#ifdef CONFIG_ANDROID
-    #warning "Android probe lock = 1"
-    #define _PROBE_LOCK_ 1
-#else
-    #define _PROBE_LOCK_ 0
-#endif
-//-----------------------------------------------------------------------------
 // Definitions
 //-----------------------------------------------------------------------------
 
 // Version Information
-#define DRIVER_VERSION "2018-04-18/SWI_2.47 Android"
+#define DRIVER_VERSION "2015-10-05/SWI_2.34_android"
 #define DRIVER_AUTHOR "Qualcomm Innovation Center"
 #define DRIVER_DESC "GobiNet"
 #define QOS_HDR_LEN (6)
@@ -152,26 +116,16 @@ static inline __u8 ipv6_tclass2(const struct ipv6hdr *iph)
 #define IPV4HDR_TOT_UPPER (2)
 #define IPV4HDR_TOT_LOWER (3)
 #define MAC48_MULTICAST_ID (0x33)
-#define GOBI_MAX_SINGLE_PACKET_SIZE 2048
-#define FIX_RX_BUFFER 1
 
 // Debug flag
 int debug;
 int qos_debug;
-int iModuleExit=0;
-/*
- * enable/disable TE flow control
- */
-int iTEEnable=0;
-/*
- * Is RAW IP RAW
- */
-#ifndef DATA_MODE_RP
-int iRAWIPEnable=0;
-#else
-int iRAWIPEnable=1;
-#endif
 
+/* The following definition is disabled (commented out) by default.
+ * When uncommented it enables a feature that provides 'feedback' to an 
+ * application about allocated and freed resources on transmit path  provided
+ * CONFIG_PM is enabled in the kernel*/
+/*#define TX_URB_MONITOR*/
 #ifdef TX_URB_MONITOR
 
     /* 
@@ -181,9 +135,7 @@ int iRAWIPEnable=1;
      * TX_URB_MONITOR indicates the changes made for URB monitor to work 
      * 
      */
-    #ifndef TX_XMIT_SIERRA
     #define TX_XMIT_SIERRA
-    #endif
 
 /* Current URB monitor implementation is supported on kernel versions
  * between 2.6.31 and 2.6.32. This is because the default "usbnet_start_xmit" function
@@ -191,9 +143,6 @@ int iRAWIPEnable=1;
  * there is a change in "usbnet_start_xmit" which is not handled 
  * by Sierra Gobinet driver
  */
-//TO TEST DIFFERENT KERNEL VERSIONS
-//#undef LINUX_VERSION_CODE
-//#define LINUX_VERSION_CODE  KERNEL_VERSION( 3,13,1 )
 #if (LINUX_VERSION_CODE < KERNEL_VERSION( 2,6,31 ) ||\
        (LINUX_VERSION_CODE > KERNEL_VERSION( 2,6,32 ) &&\
        LINUX_VERSION_CODE < KERNEL_VERSION( 2,6,35 )) ||\
@@ -201,13 +150,8 @@ int iRAWIPEnable=1;
        LINUX_VERSION_CODE < KERNEL_VERSION( 3,0,6 )) ||\
        (LINUX_VERSION_CODE > KERNEL_VERSION( 3,0,6 ) &&\
        LINUX_VERSION_CODE < KERNEL_VERSION( 3,10,1 )) ||\
-       (LINUX_VERSION_CODE > KERNEL_VERSION( 3,11,0 ) &&\
-       LINUX_VERSION_CODE < KERNEL_VERSION( 3,12,0)) ||\
-       (LINUX_VERSION_CODE > KERNEL_VERSION( 3,12,0 ) &&\
-       LINUX_VERSION_CODE < KERNEL_VERSION( 4,4,0)) ||\
-       (LINUX_VERSION_CODE > KERNEL_VERSION( 4,4,0 ) &&\
-       LINUX_VERSION_CODE < KERNEL_VERSION( 4,4,2)) ||\
-       LINUX_VERSION_CODE >= KERNEL_VERSION( 4,5,0 ) )
+       LINUX_VERSION_CODE > KERNEL_VERSION( 3,10,39 ) )
+       )
 #error "URB_MONITOR is NOT supported on this kernel version"
 #endif
 #endif //TX_URB_MONITOR
@@ -220,332 +164,8 @@ int txQueueLength = 100;
 
 // Class should be created during module init, so needs to be global
 static struct class * gpClass;
-struct semaphore taskLoading;
 
-#if GOBI_WORK_QUEUE
-#include <linux/workqueue.h>
-struct workqueue_struct *gWorkQueue = NULL;
-#endif
-
-/**************************************************/
-void StopTask(sGobiUSBNet *pDev);
-bool isModuleUnload(sGobiUSBNet *pDev);
-int FixEthFrame(struct usbnet *dev, struct sk_buff *skb, int isIpv4);
-void ResetEthHeader(struct usbnet *dev, struct sk_buff *skb, int isIpv4);
-int GobiUSBNetOpen( struct net_device * pNet );
-int GobiUSBNetStop( struct net_device * pNet );
-#ifdef FIX_RX_BUFFER
-int GobiUSBNetChangeMTU(struct net_device *netdev, int new_mtu);
-#endif
-static int GobiNetDriverLteRxFixup(struct usbnet *dev, struct sk_buff *skb);
-void SendWakeupControlMsg(
-   struct usb_interface * pIntf,
-   int oldPowerState);
-int GobiNetResetResume( struct usb_interface * pIntf );
-void GobiNetReset(struct usb_interface * pIntf);
-static void gobi_work_handler(struct work_struct *w);
-
-static void GobiNetDriverUnbind(
-   struct usbnet *         pDev,
-   struct usb_interface *  pIntf);
-static int GobiNetDriverBind(
-   struct usbnet *         pDev,
-   struct usb_interface *  pIntf );
-    
-void ClearTaskID(bool bForceMode,sGobiUSBNet *pDev)
-{
-   int i=0;
-   int iTaskID = 0;
-   int isLocked = 0;
-   if(pDev==NULL)
-   {
-      DBG("%s : %d\n",__FUNCTION__,__LINE__);
-      return ;
-   }
-   iTaskID = pDev->iTaskID;
-   if(iTaskID==-1)
-   {
-      DBG("%s : %d\n",__FUNCTION__,__LINE__);
-      return ;
-   }
-
-   while(!down_trylock( &(pDev->taskIDSem) ))
-   {
-      i++;
-      if(i>MAX_RETRY_TASK_LOCK_TIME)
-      {
-         printk("ClearTaskID Get TaskID Timeout");
-         if(bForceMode)
-         {
-            if(pDev)
-               pDev->iTaskID=-1;
-            else
-            {
-               DBG("%s %d\n",__FUNCTION__,__LINE__);
-            }
-            return ;
-         }
-         else
-         {
-            isLocked = 1;
-            break;
-         }
-         
-      }
-      wait_ms(MAX_RETRY_TASK_MSLEEP_TIME);
-      if(signal_pending(current))
-      {
-        isLocked = 1;
-        break;
-      }
-      
-      if(pDev==NULL)
-      {
-         return;
-      }
-   }
-   set_current_state(TASK_RUNNING);
-   DBG("%s iTaskID(%d)\n",__FUNCTION__,iTaskID);
-   if(pDev)
-      pDev->iTaskID=-1;
-   if(pDev)
-   {
-      if(isLocked==0)
-      up(&(pDev->taskIDSem));
-   }
-}
-
-
-void StopTask(sGobiUSBNet *pDev)
-{
-   int i =0;
-   int isLocked = 0;
-   if(pDev==NULL)
-   {
-      return ;
-   }
-   while(!down_trylock( &(pDev->taskIDSem) ))
-   {
-      i++;
-      if(i>MAX_RETRY_TASK_LOCK_TIME)
-      {
-         DBG("StopTask Get TaskID Timeout");
-         isLocked = 1;
-         break;
-      }
-      set_current_state(TASK_INTERRUPTIBLE);
-      wait_ms(MAX_RETRY_TASK_MSLEEP_TIME);
-      if(signal_pending(current))
-      {
-         set_current_state(TASK_RUNNING);
-         return ;
-      }
-      if(pDev==NULL)
-      {
-         set_current_state(TASK_RUNNING);
-         return ;
-      }
-   }
-   set_current_state(TASK_RUNNING);
-   if(pDev==NULL)
-   {
-      return ;
-   }
-   else
-   {
-      if(pDev->iTaskID>0)
-      {
-         if(pDev)
-         {
-            if(pDev->task)
-               kthread_stop(pDev->task);
-         }
-         else
-         {
-            return ;
-         }
-         if(pDev)
-         {
-            pDev->task = NULL;
-            pDev->iTaskID = -1;
-         }
-         else
-         {
-            return ;
-         }
-      }
-   }
-   if(pDev)
-   {
-      if(isLocked == 0)
-     up(&pDev->taskIDSem);
-   }
-   return ;
-}
-
-int thread_function(void *data)
-{
-
-   int status=0;
-   sGobiUSBNet * pGobiDev = (sGobiUSBNet*)data;
-   char szQMIBusName[64]={0};
-   struct usb_device *dev = NULL;
-
-   
-   #if _PROBE_LOCK_
-   int i = 0;
-   while(0!=down_trylock( &taskLoading ))
-   {
-     if((kthread_should_stop())||
-        signal_pending(current))
-      {
-         pGobiDev->task = NULL;
-         pGobiDev->iTaskID = -1;
-         pGobiDev->mbQMIValid = false;
-         return -1;
-      }
-      i++;
-      if( (i>5000) || isModuleUnload(pGobiDev))
-      {
-         DBG("Get TaskID Timeout");
-         pGobiDev->iTaskID = -1;
-         return 0;
-      }
-      if((i%1000) ==999)
-         DBG("Waiting...\n");
-      set_current_state(TASK_INTERRUPTIBLE);
-      if (signal_pending(current))
-      {
-         return -1;
-      }
-      wait_ms(10);
-      
-      if((kthread_should_stop())||
-        signal_pending(current))
-      {
-         pGobiDev->task = NULL;
-         pGobiDev->iTaskID = -1;
-         pGobiDev->mbQMIValid = false;
-         return -1;
-      }
-   }
-   set_current_state(TASK_RUNNING);
-   #endif
-   dev = interface_to_usbdev(pGobiDev->mUsb_Interface);
-   snprintf(szQMIBusName,63,"qcqmi%d-%d-%s:%d.%d",   
-      (int)pGobiDev->mQMIDev.qcqmi,   
-      dev->bus->busnum, dev->devpath,    
-      dev->actconfig->desc.bConfigurationValue,   
-      pGobiDev->mUsb_Interface->cur_altsetting->desc.bInterfaceNumber);
-   pGobiDev->mQMIDev.mpClientMemList = NULL;
-   pGobiDev->iNetLinkStatus = eNetDeviceLink_Disconnected;
-   DBG("Handle qcqmi(%s), task: %d\n",szQMIBusName,pGobiDev->iTaskID);
-   status = RegisterQMIDevice( pGobiDev, pGobiDev->mIs9x15);
-   if (status != 0)
-   {
-      if(pGobiDev)
-      {
-        ClearTaskID(false,pGobiDev);
-        if(pGobiDev)
-        {
-           DBG("Finish qcqmi(%s) task: %d %d\n",szQMIBusName,pGobiDev->iTaskID,status);
-           pGobiDev->task = NULL;
-           pGobiDev->iTaskID = -1;
-           pGobiDev->mbQMIValid = false;
-        }
-      }
-   }
-   else 
-   {
-      if(pGobiDev->iDataMode==eDataMode_RAWIP)
-      {
-         pGobiDev->mpNetDev->net->hard_header_len = 0;
-         pGobiDev->mpNetDev->net->flags |= IFF_NOARP;
-         #if (LINUX_VERSION_CODE >= KERNEL_VERSION( 4,4,0 ))
-         pGobiDev->mpNetDev->net->flags |= IFF_NOARP | IFF_MULTICAST;
-         /* recalculate buffers after changing hard_header_len */
-         usbnet_change_mtu(pGobiDev->mpNetDev->net, pGobiDev->mpNetDev->net->mtu);
-         pGobiDev->mpNetDev->rx_urb_size = GOBI_MAX_SINGLE_PACKET_SIZE;
-         #if (LINUX_VERSION_CODE >= KERNEL_VERSION( 3,12,0 ))
-         usbnet_update_max_qlen(pGobiDev->mpNetDev);
-         #endif
-         #endif
-      
-         printk(KERN_INFO "RawIP mode\n" );
-      }
-      else
-      {
-         printk(KERN_INFO "Ethernet mode\n" );
-      }
-   }
-   if(pGobiDev)
-   {
-      ClearTaskID(false,pGobiDev);
-      if(pGobiDev)
-      {
-         DBG("Finish qcqmi(%s) task: %d %d\n",szQMIBusName,pGobiDev->iTaskID,status);
-         pGobiDev->task = NULL;
-         pGobiDev->iTaskID = -1;
-      }
-   }
-
-   #if _PROBE_LOCK_
-   up(&taskLoading);
-   #endif
-
-   if (status != 0)
-   {
-      // usbnet_disconnect() will call GobiNetDriverUnbind() which will call
-      // DeregisterQMIDevice() to clean up any partially created QMI device
-      if(pGobiDev->mbUnload >= eStatUnloading)
-      {
-         DBG("Device Disconnecting...\n");
-         return 0;
-      }
-      if((kthread_should_stop())||
-        signal_pending(current))
-      {
-         return 0;
-      }
-      if(pGobiDev)
-      {
-         if(IsDeviceDisconnect(pGobiDev))
-         {
-            DBG( "Device Disconnected!\n" );
-            return 0;
-         }
-         if(-ETIMEDOUT==status)
-         {
-            DBG( "Device usbnet_disconnect!\n" );
-            usbnet_disconnect( pGobiDev->mUsb_Interface);
-            DBG( "Device usb_set_intfdata!\n" );
-            usb_set_intfdata(pGobiDev->mUsb_Interface, NULL);
-         }
-      }
-      if(pGobiDev->mbUnload >= eStatUnloading)
-      {
-         DBG("Device Disconnecting...\n");
-         return 0;
-      }
-      if((kthread_should_stop())||
-        signal_pending(current))
-      {
-         return 0;
-      }
-      if(-ETIMEDOUT==status)
-      {
-         struct usb_device *udev;
-         printk(KERN_INFO"RESET USB DEVICE...\n");
-         udev = interface_to_usbdev(pGobiDev->mUsb_Interface);
-         if(pGobiDev->mUsb_Interface->cur_altsetting->desc.bInterfaceNumber ==8)
-         usb_reset_device(udev);
-      }
-   }
-   
-   return 0;
-}
-
-/**************************************************/
+int threshold;
 #ifdef CONFIG_PM
 bool bIsSuspend(sGobiUSBNet *pGobiDev)
 {
@@ -561,40 +181,7 @@ void SetCurrentSuspendStat(sGobiUSBNet *pGobiDev,bool bSuspend)
    unsigned long flags = 0;
    spin_lock_irqsave(&pGobiDev->sSuspendLock,flags);
    pGobiDev->bSuspend = bSuspend;
-   pGobiDev->iSuspendReadWrite = RESUME_TX_RX_DISABLE;
    spin_unlock_irqrestore(&pGobiDev->sSuspendLock,flags);
-}
-
-//Don't do this before SetCurrentSuspendStat
-void SetTxRxStat(sGobiUSBNet *pGobiDev,int state)
-{
-   unsigned long flags = 0;
-   spin_lock_irqsave(&pGobiDev->sSuspendLock,flags);
-   if(state==RESUME_TX_RX_DISABLE)
-   {
-      pGobiDev->iSuspendReadWrite = RESUME_TX_RX_DISABLE;
-   }
-   else
-   {
-      pGobiDev->iSuspendReadWrite |= state;
-      DBG("%s ON\n",(state==RESUME_RX_OKAY)? "Rx" : "Tx");
-   }
-   spin_unlock_irqrestore(&pGobiDev->sSuspendLock,flags);
-
-}
-
-int GetTxRxStat(sGobiUSBNet *pGobiDev,int Channel)
-{
-   if(Channel & RESUME_RX_OKAY)
-   {
-      return (pGobiDev->iSuspendReadWrite & RESUME_RX_OKAY);
-   }
-   if(Channel & RESUME_TX_OKAY)
-   {
-      return (pGobiDev->iSuspendReadWrite & RESUME_TX_OKAY);
-   }
-   DBG( "%s OFF\n",(Channel==RESUME_RX_OKAY)? "Rx" : "Tx");
-   return 0;
 }
 
 /*===========================================================================
@@ -618,15 +205,12 @@ int GobiNetSuspend(
 {
    struct usbnet * pDev;
    sGobiUSBNet * pGobiDev;
-   int nRet = 0;
-   int i,j;
-   int last_rx_packet,last_tx_packet;
 
    if (pIntf == 0)
    {
       return -ENOMEM;
    }
-   DBG("\n");
+
 #if (LINUX_VERSION_CODE > KERNEL_VERSION( 2,6,23 ))
    pDev = usb_get_intfdata( pIntf );
 #else
@@ -635,53 +219,19 @@ int GobiNetSuspend(
 
    if (pDev == NULL || pDev->net == NULL)
    {
-      printk(KERN_ERR"failed to get netdevice\n" );
+      DBG( "failed to get netdevice\n" );
       return -ENXIO;
    }
 
    pGobiDev = (sGobiUSBNet *)pDev->data[0];
    if (pGobiDev == NULL)
    {
-      printk(KERN_ERR"failed to get QMIDevice\n" );
+      DBG( "failed to get QMIDevice\n" );
       return -ENXIO;
    }
-    
-    #if GOBI_WORK_QUEUE
-    printk(KERN_INFO"Cancel delay work \n");
-    flush_workqueue(gWorkQueue);
-    cancel_delayed_work(&pGobiDev->dw_reset);
-    #endif
-    GobiSetDownReason( pGobiDev, DRIVER_SUSPENDED );  // disable interface asap
-
-   #if (LINUX_VERSION_CODE < KERNEL_VERSION( 2,6,33 ))
-   if (pDev->udev->auto_pm == 0)
-   #else
-   if ((powerEvent.event & PM_EVENT_AUTO) == 0)
-   #endif
-   {
-      DBG( "ConfigPowerSaveSettings\n" );
-      //if(ConfigPowerSaveSettings(pGobiDev,QMICTL,QMI_CTL_SYNC_IND)<0)
-      //   printk(KERN_ERR"Config Power Save Setting error 1\n");
-      if(ConfigPowerSaveSettings(pGobiDev,QMIWDS,QMI_WDS_GET_PKT_SRVC_STATUS_IND)<0)
-         printk(KERN_ERR"Config Power Save Setting error 1\n");
-      if(ConfigPowerSaveSettings(pGobiDev,QMINAS,QMI_NAS_SERVING_SYSTEM_IND)<0)
-         printk(KERN_ERR"Config Power Save Setting error 2\n");
-      if(ConfigPowerSaveSettings(pGobiDev,QMIWMS,QMI_WMS_EVENT_REPORT_IND)<0)
-         printk(KERN_ERR"Config Power Save Setting error 3\n");
-      if(ConfigPowerSaveSettings(pGobiDev,QMIVOICE,QMI_VOICE_ALL_CALL_STATUS_IND)<0)
-         printk(KERN_ERR"Config Power Save Setting error 4\n");
-   }
-
-   if(SetPowerSaveMode(pGobiDev,1)<0)
-   {
-      printk(KERN_ERR"Suspend Set Power Save Mode error\n");
-   }
-   else
-   {
-      DBG( "Set Power Save Mode 1\n" );
-   }
-   
    SetCurrentSuspendStat(pGobiDev,1);
+
+   KillRead(pGobiDev);
    
    // Is this autosuspend or system suspend?
    //    do we allow remote wakeup?
@@ -705,80 +255,16 @@ int GobiNetSuspend(
       // Stop QMI read callbacks
       pDev->udev->reset_resume = 0;
 
-      DBG("suspend event = 0x%04x\n", powerEvent.event );
       // Store power state to avoid duplicate resumes
       pIntf->dev.power.power_state.event = powerEvent.event;
    }
    else
    {
       // Other power modes cause QMI connection to be lost
-      //pDev->udev->reset_resume = 0;
+      pDev->udev->reset_resume = 1;
    }
 
-   KillRead(pGobiDev);
-   
-   #if defined(USB_INTRF_FUNC_SUSPEND) && defined(USB_INTRF_FUNC_SUSPEND_RW)
-   
-   /* send control message to resume from suspend mode for all interface. 
-      This is required by modem on USB3.0 selective suspend */
-   if ( pDev->udev->speed >= USB_SPEED_SUPER )
-   {
-      nRet = Gobi_usb_control_msg(pDev->udev, usb_sndctrlpipe(pDev->udev, 0),
-                               USB_REQ_SET_FEATURE, USB_RECIP_INTERFACE,
-                               USB_INTRF_FUNC_SUSPEND,
-                               USB_INTRF_FUNC_SUSPEND_RW | USB_INTRF_FUNC_SUSPEND_LP |
-                               pIntf->cur_altsetting->desc.bInterfaceNumber, /* two bytes in this field, suspend option(1 byte) | interface number(1 byte) */
-                               NULL, 0, USB_CTRL_SET_TIMEOUT);
-      if (nRet != 0)
-      {
-          DBG("[line:%d] send usb_control_msg failed!nRet = %d\n", __LINE__, nRet);
-      }
-   }
-   #endif
-
-   //USB/xhci: Enable remote wakeup for USB3 devices
-   nRet = Gobi_usb_control_msg(pDev->udev, usb_sndctrlpipe(pDev->udev, 0),
-                               USB_REQ_SET_FEATURE, USB_RECIP_DEVICE,
-                               USB_DEVICE_REMOTE_WAKEUP,
-                               0, //Don't care about which interface
-                               NULL,
-                               0,
-                               USB_CTRL_SET_TIMEOUT);
-
-   
-   if (nRet != 0)
-   {
-       DBG("[line:%d] send usb_control_msg failed!nRet = %d\n", __LINE__, nRet);
-   }
-   
-   //wait for tx/rx done
-   j=0;
-   for(i=0;i<1000;i++)
-   {
-        last_rx_packet = pDev->net->stats.rx_packets;
-        last_tx_packet = pDev->net->stats.tx_packets;
-        msleep(10);
-        if(last_rx_packet < pDev->net->stats.rx_packets)
-        {
-            i--;
-            j=0;
-            DBG(" rx: %d",pDev->net->stats.rx_packets);
-         }
-        else if(last_tx_packet < pDev->net->stats.tx_packets)
-        {
-            i--;
-            j=0;
-            DBG(" tx: %d",pDev->net->stats.tx_packets);
-         }
-         else
-         {
-            DBG(" rx tx idle");
-            if(j++>200)
-                break;
-         }
-   }
-   
-   // Run usbnet's suspend function so that the kernel spin lock counter keeps balance
+   // Run usbnet's suspend function
    return usbnet_suspend( pIntf, powerEvent );
 }
 
@@ -803,7 +289,6 @@ int GobiNetResume( struct usb_interface * pIntf )
    int nRet= 0;
    int oldPowerState;
 
-   DBG("\n");
    if (pIntf == 0)
    {
       return -ENOMEM;
@@ -817,67 +302,38 @@ int GobiNetResume( struct usb_interface * pIntf )
 
    if (pDev == NULL || pDev->net == NULL)
    {
-      printk(KERN_ERR"failed to get netdevice\n" );
+      DBG( "failed to get netdevice\n" );
       return -ENXIO;
    }
 
    pGobiDev = (sGobiUSBNet *)pDev->data[0];
    if (pGobiDev == NULL)
    {
-      printk(KERN_ERR"failed to get QMIDevice\n" );
+      DBG( "failed to get QMIDevice\n" );
       return -ENXIO;
    }
-   
-   
+
    oldPowerState = pIntf->dev.power.power_state.event;
    pIntf->dev.power.power_state.event = PM_EVENT_ON;
-   DBG( "resuming from power mode 0x%04x\n", oldPowerState );
+   DBG( "resuming from power mode %d\n", oldPowerState );
 
-#if (LINUX_VERSION_CODE < KERNEL_VERSION( 2,6,29 ))
+   if (oldPowerState & PM_EVENT_SUSPEND)
+   {
+      // It doesn't matter if this is autoresume or system resume
+      GobiClearDownReason( pGobiDev, DRIVER_SUSPENDED );
+      #if (LINUX_VERSION_CODE < KERNEL_VERSION( 2,6,29 ))
       // Kick Auto PM thread to process any queued URBs
       complete( &pGobiDev->mAutoPM.mThreadDoWork );
-#endif
-   
-   SendWakeupControlMsg(pIntf,oldPowerState);
-   GobiClearDownReason( pGobiDev, DRIVER_SUSPENDED );
-   SetCurrentSuspendStat(pGobiDev,0);
-
-
-   /* Run usbnet's resume function so that the kernel spin lock counter keeps balance */
+      #endif
+   }
+   else
+   {
+      DBG( "nothing to resume\n" );
+      return 0;
+   }
    nRet = usbnet_resume( pIntf );
-   if (nRet != 0)
-   {
-       printk(KERN_ERR"[line:%d] usbnet_resume failed!nRet = %d\n", __LINE__, nRet);
-   }
-
-   if(pGobiDev->mbUnload < eStatUnloading)
-   {
-      StartRead(pGobiDev);
-      
-      if(SetPowerSaveMode(pGobiDev,0)<0)
-      {
-         printk(KERN_ERR" Resume Set Power Save Mode 0 error 1\n");
-         //Disable data traffic now
-         #if GOBI_WORK_QUEUE
-         SetCurrentSuspendStat(pGobiDev,1);
-         unsigned long onesec =0;
-         onesec = msecs_to_jiffies(5000);
-         INIT_DELAYED_WORK(&pGobiDev->dw_reset,gobi_work_handler);
-         queue_delayed_work(gWorkQueue, &pGobiDev->dw_reset, onesec);
-         GobiClearDownReason( pGobiDev, DRIVER_SUSPENDED );
-         netif_carrier_off( pGobiDev->mpNetDev->net );
-         return nRet;
-         #endif
-      }
-      else
-      {
-         printk(KERN_INFO"Set Power Save Mode 0\n" );
-      }
-   }
-   // It doesn't matter if this is autoresume or system resume
-
-   SetTxRxStat(pGobiDev,RESUME_RX_OKAY);
-   SetTxRxStat(pGobiDev,RESUME_TX_OKAY);
+   SetCurrentSuspendStat(pGobiDev,0);
+   StartRead(pGobiDev);
    return nRet;
 }
 
@@ -897,37 +353,42 @@ void GobiNetReset(struct usb_interface * pIntf)
        DBG( "failed to get QMIDevice\n" );
        return;
     }
-    
     //DeregisterQMIDevice(pGobiDev);
-
     usbnet_disconnect(pIntf);
-    usb_set_intfdata(pIntf, NULL);
-
 }
 
 int GobiNetResetResume( struct usb_interface * pIntf )
 {
-   printk(KERN_INFO"reset resume suspend\n");
-   if(pIntf->cur_altsetting->desc.bInterfaceNumber ==8)
+   struct usbnet * pDev;
+   sGobiUSBNet * pGobiDev;
+   DBG("reset resume suspend");
+   #if (LINUX_VERSION_CODE > KERNEL_VERSION( 2,6,23 ))
+   pDev = usb_get_intfdata( pIntf );
+   #else
+   pDev = (struct usbnet *)pIntf->dev.platform_data;
+   #endif
+
+   if (pDev == NULL || pDev->net == NULL)
    {
-      struct usb_device *udev;
-      printk(KERN_INFO"Reset Device\n");
-      udev = interface_to_usbdev(pIntf);
-      usb_reset_device(udev);
+      DBG( "failed to get netdevice\n" );
+      return -ENXIO;
    }
-   return 0;
+
+   pGobiDev = (sGobiUSBNet *)pDev->data[0];
+   if (pGobiDev == NULL)
+   {
+      DBG( "failed to get QMIDevice\n" );
+      return -ENXIO;
+   }
+   
+   GobiNetResume(pIntf);
+   
+   //DeregisterQMIDevice( pGobiDev );
+    return 0;
 }
 
 #endif /* CONFIG_PM */
 
-void UsbAutopmGetInterface(struct usb_interface * intf)
-{
-   #if (LINUX_VERSION_CODE < KERNEL_VERSION( 3,0,0 ))
-   gobi_usb_autopm_get_interface_async(intf);
-   #else
-   gobi_usb_autopm_get_interface_no_resume(intf); 
-   #endif
-}
 /* very simplistic detection of IPv4 or IPv6 headers */
 static bool possibly_iphdr(const char *data)
 {
@@ -1059,60 +520,14 @@ static void GobiNetDriverUnbind(
 {
    sGobiUSBNet * pGobiDev = (sGobiUSBNet *)pDev->data[0];
 
-   int counter = 0;
    if(pGobiDev == NULL)
    {
        return ;
    }
-   printk(KERN_INFO"GobiNet unbind \n");
    // Should already be down, but just in case...
    netif_stop_queue(pDev->net);
    netif_carrier_off( pDev->net );
-   netif_stop_queue(pGobiDev->mpNetDev->net);
-   netif_carrier_off(pGobiDev->mpNetDev->net);
-   #if LINUX_VERSION_CODE >= KERNEL_VERSION( 3,0,0 )
-   if (pDev->net->flags & IFF_UP)
-   dev_deactivate(pDev->net);
-   #endif
-   while(pGobiDev->iTaskID>=0)
-   {
-        DBG("GobiNetDriverUnbind Probe not finish\n");
-        pGobiDev->mbUnload = eStatUnloading;
-        set_current_state(TASK_INTERRUPTIBLE);
-        wait_ms(100);
-        if( signal_pending(current))
-        {
-            break;
-        }
-        if(counter++>10)
-            break;
-   }
-   set_current_state(TASK_RUNNING);
-   if(pGobiDev->iTaskID>=0)
-   {
-      char szQMIBusName[64]={0};
-      struct usb_device *dev = interface_to_usbdev(pGobiDev->mUsb_Interface);
-      snprintf(szQMIBusName,63,"qcqmi%d-%d-%s:%d.%d",
-      (int)pGobiDev->mQMIDev.qcqmi,   
-      dev->bus->busnum, dev->devpath,    
-      dev->actconfig->desc.bConfigurationValue,   
-      pGobiDev->mUsb_Interface->cur_altsetting->desc.bInterfaceNumber);
-      pGobiDev->mbUnload = eStatUnloading;
-      DBG("GobiNetDriverUnbind Probe not finish %s\n",szQMIBusName);
-      if(pGobiDev->iTaskID>=0)
-      {
-         if(pGobiDev->iTaskID>0)
-         {
-            StopTask(pGobiDev);
-            set_current_state(TASK_RUNNING);
-            wait_ms(500);
-            //gobi_flush_work();
-         }
-         pGobiDev->iTaskID = -1;
-      }
-      
-      
-   }
+
    DeregisterQMIDevice( pGobiDev );
 
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION( 2,6,29 ))
@@ -1132,6 +547,137 @@ static void GobiNetDriverUnbind(
    pGobiDev = NULL;
 }
 
+struct sk_buff *GobiNetDriverTxQoS(
+   struct usbnet  *pDev, 
+   struct sk_buff *pSKB,
+   gfp_t flags)
+{
+   unsigned char *p_qos_hdr;
+   struct sGobiUSBNet * pGobiDev;
+
+   pGobiDev = (sGobiUSBNet *)pDev->data[0];
+   if (pGobiDev == NULL)
+   {
+      DBG( "failed to get QMIDevice\n" );
+      return NULL;
+   }
+
+   #ifdef CONFIG_PM
+   if(bIsSuspend(pGobiDev))
+   {
+       usbnet_resume(pGobiDev->mpIntf);
+   }
+   #endif
+
+   if (qos_debug)
+   {
+       print_hex_dump(KERN_INFO,  "QoS Header : ", DUMP_PREFIX_OFFSET,
+               16, 1, pSKB->data, pSKB->len, true);
+   }
+
+   if (skb_headroom(pSKB) < QOS_HDR_LEN) {
+       struct sk_buff *skb_new;
+
+       skb_new = skb_realloc_headroom(pSKB, QOS_HDR_LEN);
+       if (!skb_new) {
+           dev_kfree_skb_any(pSKB);
+           return NULL;
+       }
+       kfree_skb(pSKB);
+       pSKB = skb_new;
+   }
+
+   // add QoS header(6B) at the beginning
+   if ( (p_qos_hdr = skb_push(pSKB, QOS_HDR_LEN)) )
+   {
+      int j;
+      u8 iph_dscp = 0;
+      bool match = false;
+
+      if (pSKB->protocol == htons(ETH_P_IPV6))
+      {
+      #ifdef CONFIG_IPV6
+          // DSCP is most significant 6 bits of IPv6 Traffic Class field
+          struct ipv6hdr* ipv6h = ipv6_hdr(pSKB);
+          iph_dscp = (u8)ipv6_tclass2(ipv6h) >> 2;
+          QDBG("dscp IPV6 0x%x\n", iph_dscp);
+      #endif
+      }
+      else if (pSKB->protocol == htons(ETH_P_IP))
+      {
+          // DSCP is most significant 6 bites of IPv4 Type of Service field
+          struct iphdr* iph = ip_hdr(pSKB);
+          iph_dscp = (u8)iph->tos >> 2;
+          QDBG("dscp IPV4 0x%x\n", iph_dscp);
+      }
+
+      memset(p_qos_hdr, 0, QOS_HDR_LEN);
+      /*
+       * version : 1
+       * reserve : 0
+       */
+      p_qos_hdr[0] = 1;
+      p_qos_hdr[1] = 0;
+
+      // Search mapping override table if in use
+      if (pGobiDev->maps.count)
+      {
+          for(j=0;j<MAX_MAP-1;j++)
+          {
+              if ( iph_dscp == pGobiDev->maps.table[j].dscp )
+              {
+                  match = true;
+                  switch( pGobiDev->maps.table[j].state) {
+                      case FLOW_ACTIVATED:
+                      case FLOW_ENABLED:
+                          memcpy(&p_qos_hdr[2], &pGobiDev->maps.table[j].qosId, 4);
+                          break;
+    
+                      case FLOW_DELETED:
+                      case FLOW_SUSPENDED:
+                      default:
+                          //use default qos id, ie.zero (already resetted earlier)
+                          QDBG("No QoS ID added!\n");
+                          break;
+                  };
+                  break;
+              }
+          }
+
+          //if no match in normal route, check if wildcard route exist
+          if ((!match) &&
+              ( UNIQUE_DSCP_ID == pGobiDev->maps.table[MAX_MAP-1].dscp ))
+          {
+              memcpy(&p_qos_hdr[2], &pGobiDev->maps.table[MAX_MAP-1].qosId, 4);
+              match = true;
+              QDBG("Wildcard route exist, redirect QoS flow (%d) to default bearer!\n", j);
+          }
+      }
+
+      //TODO Perform TFT TX filter matching here
+      //if (!match)
+      //{
+      //  //call TFT TX filter matching function
+      //}
+
+      if (qos_debug)
+      {
+          print_hex_dump(KERN_INFO,  "QoS Header : ", DUMP_PREFIX_OFFSET,
+                  16, 1, p_qos_hdr, QOS_HDR_LEN, true);
+      }
+      return pSKB;
+   }
+   else
+   {
+      QDBG( "Fail to preprend QoS header ");
+   }
+
+   // Filter the packet out, release it
+   dev_kfree_skb_any(pSKB);
+   return NULL;
+}
+
+#ifdef DATA_MODE_RP
 /*===========================================================================
 METHOD:
    GobiNetDriverTxFixup (Public Method)
@@ -1152,68 +698,31 @@ struct sk_buff *GobiNetDriverTxFixup(
    struct sk_buff *pSKB,
    gfp_t flags)
 {
-   struct sGobiUSBNet * pGobiDev;
+   unsigned char *p_qos_hdr;
    DBG( "\n" );
+   #ifdef CONFIG_PM
+   struct sGobiUSBNet * pGobiDev;
    pGobiDev = (sGobiUSBNet *)pDev->data[0];
    if (pGobiDev == NULL)
    {
       DBG( "failed to get QMIDevice\n" );
       return NULL;
    }
-   #ifdef CONFIG_PM
-   #ifndef CONFIG_ANDROID   //only require for auto suspend
    if(bIsSuspend(pGobiDev))
    {
-      printk(KERN_INFO"Suspended\n");
-      UsbAutopmGetInterface( pGobiDev->mpIntf );
-      gobi_usb_autopm_put_interface( pGobiDev->mpIntf );
+      usbnet_resume(pGobiDev->mpIntf);
    }
-   if(0==GetTxRxStat(pGobiDev,RESUME_TX_OKAY))
-   {
-      printk(KERN_INFO"Suspended Tx Drop\n");
-      return NULL;
-   }
-   #else
-   if(0==GetTxRxStat(pGobiDev,RESUME_TX_OKAY))
-   {
-      DBG("Suspended Tx Drop\n");
-      return NULL;
-   }
-   
    #endif
-   #else
-   DBG( "\n" );
-   #endif
-   if(pGobiDev->iNetLinkStatus!=eNetDeviceLink_Connected)
+   // Skip Ethernet header from message
+   if (skb_pull(pSKB, ETH_HLEN))
    {
-      DBG( "Dropped Packet : Not Connected\n" );
-      dev_kfree_skb_any(pSKB);
-      return NULL;
-   }
-   if(pGobiDev->iDataMode != eDataMode_RAWIP)
-   {
+      DBG( "For sending to device modified: ");
+      PrintHex (pSKB->data, pSKB->len);
       return pSKB;
-   }
-   if (pSKB->len > ETH_HLEN)
-   {
-      // Skip Ethernet header from message
-      if (skb_pull(pSKB, ETH_HLEN))
-      {
-         DBG( "For sending to device modified: ");
-      skb_reset_mac_header(pSKB);
-      skb_reset_network_header(pSKB);
-      skb_reset_transport_header(pSKB);
-         PrintHex (pSKB->data, pSKB->len);
-         return pSKB;
-      }
-      else
-      {
-         DBG( "Packet Dropped ");
-      }
    }
    else
    {
-      DBG( "Packet Dropped Length");
+      DBG( "Packet Dropped ");
    }
    // Filter the packet out, release it
    dev_kfree_skb_any(pSKB);
@@ -1239,69 +748,45 @@ static int GobiNetDriverRxFixup(
     struct sk_buff *pSKB )
 {
     sGobiUSBNet  *pGobiDev;
+    char *pTempbuffer; /* temp buffer for data packets */
     struct ethhdr *pEth;
     struct iphdr *pIp;
 
     DBG( "\n" );
 
-   /* This check is no longer done by usbnet after 3.13*/ 
-   if (pSKB->len < pDev->net->hard_header_len)
-   {
-      printk(KERN_INFO "Packet Dropped \n" );
-      return 0;
-   }
-   pGobiDev = (sGobiUSBNet *)pDev->data[0];
-   if (pGobiDev == NULL)
-   {
-      DBG( "failed to get Device\n" );
-      return -ENXIO;
-   }
+    pGobiDev = (sGobiUSBNet *)pDev->data[0];
+    if (pGobiDev == NULL)
+    {
+       DBG( "failed to get Device\n" );
+       return -ENXIO;
+    }
+    #ifdef CONFIG_PM
+    if(bIsSuspend(pGobiDev))
+    {
+       usbnet_resume(pGobiDev->mpIntf);
+    }
+    #endif
 
-   if(pGobiDev->iNetLinkStatus!=eNetDeviceLink_Connected)
-   {
-      DBG( "Dropped Packet : Not Connected\n" );
-      return 0;
-   }
     DBG( "RX From Device: ");
     PrintHex (pSKB->data, pSKB->len);
 
-   
-   if(pSKB->truesize < ETH_HLEN+pSKB->len)
-   {
-      DBG( "DROP PACKET %d < %d\n",pSKB->truesize,ETH_HLEN+pSKB->len );
-      return 0;
-   }
+    pTempbuffer = kmalloc(pSKB->len, GFP_ATOMIC);
 
     /* Copy data section to a temporary buffer */
-    if (pSKB->head +ETH_HLEN > pSKB->data )
-    {
-   memmove(pSKB->data+ETH_HLEN,pSKB->data, pSKB->len);
+    memcpy(pTempbuffer, pSKB->data, pSKB->len);
+
+    /* Copy data with offset equal to Ethernet header length */
+    memcpy((pSKB->data + ETH_HLEN), pTempbuffer, pSKB->len);
+
+    /* the len & tail pointers must be update
+     * or optlen calculation in ipv6 ndisc_router_discovery will failed
+     */
     pSKB->len = pSKB->len + ETH_HLEN;
     pSKB->tail = pSKB->tail + ETH_HLEN;
-    }
-    else
-    {
-       DBG("pSKB->head :0x%p, pSKB->data 0x%p\n",pSKB->head , pSKB->data);
-       skb_push(pSKB,ETH_HLEN);
-    }
 
-    
-    if (((*(u8 *)(pSKB->data + ETH_HLEN)) & 0xF0) == 0x40)
-    {
-       ResetEthHeader(pDev,pSKB,1);
-       return 1;
-    }
-    else if(((*(u8 *)(pSKB->data + ETH_HLEN)) & 0xF0) == 0x60)
-    {
-       ResetEthHeader(pDev,pSKB,0);
-       return 1;
-    }
-    else
-    {
-       skb_reset_mac_header(pSKB);
-       skb_reset_network_header(pSKB);
-       skb_reset_transport_header(pSKB);
-    }
+    /* Free the internal buffer; not needed */
+    kfree(pTempbuffer);
+
     pSKB->dev = pDev->net;
 
     /* If the packet is IPv4 then add corresponding Ethernet header */
@@ -1312,7 +797,7 @@ static int GobiNetDriverRxFixup(
         pSKB->protocol = cpu_to_be16(ETH_P_IP);
         DBG( "IPv4 header added: ");
     }
-   else if (((*(u8 *)(pSKB->data + ETH_HLEN)) & 0xF0) == 0x60)
+    else  if (((*(u8 *)(pSKB->data + ETH_HLEN)) & 0xF0) == 0x60)
     {
         memcpy(pSKB->data, pGobiDev->eth_hdr_tmpl_ipv6, ETH_HLEN);
         pSKB->protocol = cpu_to_be16(ETH_P_IPV6);
@@ -1336,6 +821,7 @@ static int GobiNetDriverRxFixup(
 
     return 1;
 }
+#endif
 
 #ifdef CONFIG_PM
 /*===========================================================================
@@ -1400,15 +886,9 @@ void GobiUSBNetTXTimeout( struct net_device * pNet )
    sAutoPM * pAutoPM;
    sURBList * pURBListEntry;
    unsigned long activeURBflags, URBListFlags;
-   struct usbnet * pDev = NULL;
+   struct usbnet * pDev = netdev_priv( pNet );
    struct urb * pURB;
 
-   if(pNet==NULL)
-   {
-      DBG( "GobiUSBNetTXTimeout failed to get Net\n" );
-      return;
-   }
-   pDev = netdev_priv( pNet );
    if (pDev == NULL || pDev->net == NULL)
    {
       DBG( "failed to get usbnet device\n" );
@@ -1546,7 +1026,7 @@ static int GobiUSBNetAutoPMThread( void * pData )
          spin_unlock_irqrestore( &pAutoPM->mActiveURBLock, activeURBflags );
 
          // URB is done, decrement the Auto PM usage count
-         gobi_usb_autopm_put_interface( pAutoPM->mpIntf );
+         usb_autopm_put_interface( pAutoPM->mpIntf );
 
          // Lock ActiveURB again
          spin_lock_irqsave( &pAutoPM->mActiveURBLock, activeURBflags );
@@ -1580,7 +1060,7 @@ static int GobiUSBNetAutoPMThread( void * pData )
       spin_unlock_irqrestore( &pAutoPM->mActiveURBLock, activeURBflags );
 
       // Tell autopm core we need device woken up
-      status = gobi_usb_autopm_get_interface( pAutoPM->mpIntf );
+      status = usb_autopm_get_interface( pAutoPM->mpIntf );
       if (status < 0)
       {
          DBG( "unable to autoresume interface: %d\n", status );
@@ -1610,7 +1090,7 @@ static int GobiUSBNetAutoPMThread( void * pData )
       }
 
       // Submit URB
-      status = usb_submit_urb( pAutoPM->mpActiveURB, GOBI_GFP_KERNEL );
+      status = usb_submit_urb( pAutoPM->mpActiveURB, GFP_KERNEL );
       if (status < 0)
       {
          // Could happen for a number of reasons
@@ -1619,7 +1099,7 @@ static int GobiUSBNetAutoPMThread( void * pData )
          usb_free_urb( pAutoPM->mpActiveURB );
          pAutoPM->mpActiveURB = NULL;
          spin_unlock_irqrestore( &pAutoPM->mActiveURBLock, activeURBflags );
-         gobi_usb_autopm_put_interface( pAutoPM->mpIntf );
+         usb_autopm_put_interface( pAutoPM->mpIntf );
 
          // Loop again
          complete( &pAutoPM->mThreadDoWork );
@@ -1656,17 +1136,13 @@ int GobiUSBNetStartXmit(
    sAutoPM * pAutoPM;
    sURBList * pURBListEntry, ** ppURBListEnd;
    void * pURBData;
-   struct usbnet * pDev = NULL;
+   struct usbnet * pDev = netdev_priv( pNet );
+#if defined(DATA_MODE_RP) || defined(QOS_MODE)
    struct driver_info *info;
+#endif
 
    DBG( "\n" );
 
-   if(pNet==NULL)
-   {
-      DBG( "GobiUSBNetStartXmit failed to get Net\n" );
-      return -ENXIO;
-   }   
-   pDev = netdev_priv( pNet );
    if (pDev == NULL || pDev->net == NULL)
    {
       DBG( "failed to get usbnet device\n" );
@@ -1710,22 +1186,21 @@ int GobiUSBNetStartXmit(
       return NETDEV_TX_BUSY;
    }
 
-   if(pGobiDev->iDataMode==eDataMode_RAWIP)
+#if defined(DATA_MODE_RP) || defined(QOS_MODE)
+   info = pDev->driver_info;
+   if (info->tx_fixup)
    {
-      info = pDev->driver_info;
-      if (info->tx_fixup)
+      pSKB = info->tx_fixup( pDev, pSKB, GFP_ATOMIC);
+      if (pSKB == NULL)
       {
-         pSKB = info->tx_fixup( pDev, pSKB, GOBI_GFP_ATOMIC);
-         if (pSKB == NULL)
-         {
-            DBG( "unable to tx_fixup skb\n" );
-            return NETDEV_TX_BUSY;
-         }
+         DBG( "unable to tx_fixup skb\n" );
+         return NETDEV_TX_BUSY;
       }
    }
+#endif
 
    // Allocate URBListEntry
-   pURBListEntry = kmalloc( sizeof( sURBList ), GOBI_GFP_ATOMIC );
+   pURBListEntry = kmalloc( sizeof( sURBList ), GFP_ATOMIC );
    if (pURBListEntry == NULL)
    {
       DBG( "unable to allocate URBList memory\n" );
@@ -1736,7 +1211,7 @@ int GobiUSBNetStartXmit(
    pURBListEntry->mpNext = NULL;
 
    // Allocate URB
-   pURBListEntry->mpURB = usb_alloc_urb( 0, GOBI_GFP_ATOMIC );
+   pURBListEntry->mpURB = usb_alloc_urb( 0, GFP_ATOMIC );
    if (pURBListEntry->mpURB == NULL)
    {
       DBG( "unable to allocate URB\n" );
@@ -1748,7 +1223,7 @@ int GobiUSBNetStartXmit(
       return NETDEV_TX_BUSY; 
    }
    // Allocate URB transfer_buffer
-   pURBData = kmalloc( pSKB->len, GOBI_GFP_ATOMIC );
+   pURBData = kmalloc( pSKB->len, GFP_ATOMIC );
    if (pURBData == NULL)
    {
       DBG( "unable to allocate URB data\n" );
@@ -1795,6 +1270,8 @@ int GobiUSBNetStartXmit(
 
    complete( &pAutoPM->mThreadDoWork );
 
+   // Start transfer timer
+   pNet->trans_start = jiffies;
    // Free SKB
    if (pSKB)
       dev_kfree_skb_any ( pSKB );
@@ -1803,25 +1280,6 @@ int GobiUSBNetStartXmit(
 }
 #endif /* CONFIG_PM */
 
-#ifdef FIX_RX_BUFFER
-int GobiUSBNetChangeMTU(struct net_device *net, int new_mtu)
-{
-   struct usbnet   *dev = netdev_priv(net);
-   int             ll_mtu = new_mtu + net->hard_header_len;
-   // no second zero-length packet read wanted after mtu-sized packets
-   if ((ll_mtu % dev->maxpacket) == 0)
-      return -EDOM;
-   net->mtu = new_mtu;
-   DBG("old_hard_mtu = %d old_rx_urb_size = %zd\n", dev->hard_mtu, dev->rx_urb_size);
-   dev->hard_mtu = net->mtu + net->hard_header_len;
-     DBG("hard_mtu = %d new mtu = %d, hard_header_len = %d\n", dev->hard_mtu, net->mtu, net->hard_header_len);
-   #if (LINUX_VERSION_CODE >= KERNEL_VERSION( 3,12,0 ))
-   /* max qlen depend on hard_mtu and rx_urb_size */
-   usbnet_update_max_qlen(dev);
-   #endif
-   return 0;
-}
-#endif
 /*===========================================================================
 METHOD:
    GobiUSBNetOpen (Public Method)
@@ -1840,14 +1298,8 @@ RETURN VALUE:
 int GobiUSBNetOpen( struct net_device * pNet )
 {
    int status = 0;
-   struct sGobiUSBNet * pGobiDev = NULL;
-   struct usbnet * pDev = NULL;
-   if(pNet==NULL)
-   {
-      DBG( "GobiUSBNetOpen failed to get Net device\n" );
-      return -ENXIO;
-   }
-   pDev = netdev_priv( pNet );
+   struct sGobiUSBNet * pGobiDev;
+   struct usbnet * pDev = netdev_priv( pNet );
 
    if (pDev == NULL)
    {
@@ -1863,6 +1315,7 @@ int GobiUSBNetOpen( struct net_device * pNet )
    }
 
    DBG( "\n" );
+
 #ifdef CONFIG_PM
    #if (LINUX_VERSION_CODE < KERNEL_VERSION( 2,6,29 ))
    // Start the AutoPM thread
@@ -1886,20 +1339,8 @@ int GobiUSBNetOpen( struct net_device * pNet )
    #endif
 #endif /* CONFIG_PM */
 
-   if(pGobiDev->iNetLinkStatus==eNetDeviceLink_Connected)
-   {
-      // Allow traffic
-      GobiClearDownReason( pGobiDev, NET_IFACE_STOPPED );
-   }
-   else
-   {
-	  #ifdef CONFIG_ANDROID // To prevnet packet traffic before data connection start.
-      // AndroidRIL start DHCP right after data call, need to allow traffic here 
-      // Coz WDS indication may not fast enough to allow traffic before DHCP start
-      GobiClearDownReason( pGobiDev, NET_IFACE_STOPPED );
-      #endif
-      GobiSetDownReason( pGobiDev, NO_NDIS_CONNECTION );
-   }
+   // Allow traffic
+   GobiClearDownReason( pGobiDev, NET_IFACE_STOPPED );
 
    // Pass to usbnet_open if defined
    if (pGobiDev->mpUSBNetOpen != NULL)
@@ -1910,9 +1351,9 @@ int GobiUSBNetOpen( struct net_device * pNet )
       if (status == 0)
       {
 #if (LINUX_VERSION_CODE < KERNEL_VERSION( 2,6,33 ))
-         gobi_usb_autopm_enable( pGobiDev->mpIntf );
+         usb_autopm_enable( pGobiDev->mpIntf );
 #else
-         gobi_usb_autopm_put_interface( pGobiDev->mpIntf );
+         usb_autopm_put_interface( pGobiDev->mpIntf );
 #endif
       }
 #endif /* CONFIG_PM */
@@ -1943,14 +1384,7 @@ RETURN VALUE:
 int GobiUSBNetStop( struct net_device * pNet )
 {
    struct sGobiUSBNet * pGobiDev;
-   struct usbnet * pDev = NULL;
-
-   if (pNet == NULL)
-   {
-      DBG( "GobiUSBNetStop failed to get Net\n" );
-      return -ENXIO;
-   }
-   pDev = netdev_priv( pNet );
+   struct usbnet * pDev = netdev_priv( pNet );
 
    if (pDev == NULL || pDev->net == NULL)
    {
@@ -1977,14 +1411,8 @@ int GobiUSBNetStop( struct net_device * pNet )
    // Wait for it to exit
    while( pGobiDev->mAutoPM.mpThread != NULL )
    {
-      set_current_state(TASK_INTERRUPTIBLE);
-      wait_ms(100);
-      if( (signal_pending(current))
-      {
-         break;
-      }
+      msleep( 100 );
    }
-   set_current_state(TASK_RUNNING);
    DBG( "thread stopped\n" );
    #endif
 #endif /* CONFIG_PM */
@@ -2006,8 +1434,6 @@ void ResetEthHeader(struct usbnet *dev, struct sk_buff *skb, int isIpv4)
      __be16 ip_type;
 
      skb_reset_mac_header(skb);
-     skb_reset_network_header(skb);
-     skb_reset_transport_header(skb);
      /* replace the correct destination address */
      memset(eth_hdr(skb)->h_source, 0, ETH_ALEN);
      memcpy(eth_hdr(skb)->h_dest, dev->net->dev_addr, ETH_ALEN);
@@ -2106,6 +1532,7 @@ int FixEthFrame(struct usbnet *dev, struct sk_buff *skb, int isIpv4)
 static int GobiNetDriverLteRxFixup(struct usbnet *dev, struct sk_buff *skb)
 {
    __be16 proto;
+   #ifdef CONFIG_PM
    struct sGobiUSBNet * pGobiDev;
    pGobiDev = (sGobiUSBNet *)dev->data[0];
    if (pGobiDev == NULL)
@@ -2113,41 +1540,11 @@ static int GobiNetDriverLteRxFixup(struct usbnet *dev, struct sk_buff *skb)
       DBG( "failed to get QMIDevice\n" );
       return 0;
    }
-   #ifdef CONFIG_PM
-   #ifndef CONFIG_ANDROID   //only require for auto suspend
-   if(bIsSuspend(pGobiDev)  && 
-      (GetTxRxStat(pGobiDev,RESUME_RX_OKAY)==0))
+   if(bIsSuspend(pGobiDev))
    {
-      printk(KERN_INFO"Suspended\n");
-      UsbAutopmGetInterface( pGobiDev->mpIntf );
-      gobi_usb_autopm_put_interface( pGobiDev->mpIntf );
+       usbnet_resume(pGobiDev->mpIntf);
    }
-   #else
-   
-   if(GetTxRxStat(pGobiDev,RESUME_RX_OKAY)==0)
-   {
-      DBG("Suspended Rx Drop\n");
-      return 0;
-   }
-
    #endif
-   
-   #endif
-   
-   if(pGobiDev->iNetLinkStatus!=eNetDeviceLink_Connected)
-   {
-      DBG( "Dropped Packet : Not Connected\n" );
-      return 0;
-   }
-   if(pGobiDev->iDataMode==eDataMode_RAWIP)
-   {
-      return GobiNetDriverRxFixup(dev,skb);
-   }
-   if (skb->len < dev->net->hard_header_len)
-   {
-      printk(KERN_INFO "Packet Dropped \n" );
-      return 0;
-   }
    DBG( "From Modem: ");
    PrintHex (skb->data, skb->len);
 
@@ -2187,8 +1584,6 @@ static int GobiNetDriverLteRxFixup(struct usbnet *dev, struct sk_buff *skb)
                 return 1;
             /* possibly bogus destination - rewrite just in case */
             skb_reset_mac_header(skb);
-            skb_reset_network_header(skb);
-            skb_reset_transport_header(skb);
             goto fix_dest;
         default:
         {
@@ -2200,8 +1595,6 @@ static int GobiNetDriverLteRxFixup(struct usbnet *dev, struct sk_buff *skb)
         return 0;
     skb_push(skb, ETH_HLEN);
     skb_reset_mac_header(skb);
-    skb_reset_network_header(skb);
-    skb_reset_transport_header(skb);
     eth_hdr(skb)->h_proto = proto;
     memset(eth_hdr(skb)->h_source, 0, ETH_ALEN);
 fix_dest:
@@ -2224,8 +1617,16 @@ static const struct driver_info GobiNetInfo_qmi = {
    .bind          = GobiNetDriverBind,
    .unbind        = GobiNetDriverUnbind,
 //FIXME refactor below fixup handling at cases below
-   .rx_fixup      = GobiNetDriverLteRxFixup,
+#ifdef DATA_MODE_RP
+   .rx_fixup      = GobiNetDriverRxFixup,
    .tx_fixup      = GobiNetDriverTxFixup,
+#elif defined(QOS_MODE)
+   .tx_fixup      = GobiNetDriverTxQoS,
+   //WORD AROUND integrated from qmi_wwan.c::qmi_wwan_rx_fixup
+   .rx_fixup      = GobiNetDriverLteRxFixup,
+#else
+   .rx_fixup      = GobiNetDriverLteRxFixup,
+#endif
    .data          = BIT(8) | BIT(19) |
                      BIT(10), /* MDM9x15 PDNs */
 #ifdef CONFIG_PM
@@ -2244,8 +1645,16 @@ static const struct driver_info GobiNetInfo_gobi = {
 #endif
    .bind          = GobiNetDriverBind,
    .unbind        = GobiNetDriverUnbind,
-   .rx_fixup      = GobiNetDriverLteRxFixup,
+#ifdef DATA_MODE_RP
+   .rx_fixup      = GobiNetDriverRxFixup,
    .tx_fixup      = GobiNetDriverTxFixup,
+#elif defined(QOS_MODE)
+   .tx_fixup      = GobiNetDriverTxQoS,
+   //WORD AROUND integrated from qmi_wwan.c::qmi_wwan_rx_fixup
+   .rx_fixup      = GobiNetDriverLteRxFixup,
+#else
+   .rx_fixup      = GobiNetDriverLteRxFixup,
+#endif
    .data          = BIT(0) | BIT(5),
 #ifdef CONFIG_PM
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION( 3,8,0 ))
@@ -2263,8 +1672,16 @@ static const struct driver_info GobiNetInfo_9x15 = {
 #endif
    .bind          = GobiNetDriverBind,
    .unbind        = GobiNetDriverUnbind,
-   .rx_fixup      = GobiNetDriverLteRxFixup,
+#ifdef DATA_MODE_RP
+   .rx_fixup      = GobiNetDriverRxFixup,
    .tx_fixup      = GobiNetDriverTxFixup,
+#elif defined(QOS_MODE)
+   .tx_fixup      = GobiNetDriverTxQoS,
+   //WORD AROUND integrated from qmi_wwan.c::qmi_wwan_rx_fixup
+   .rx_fixup      = GobiNetDriverLteRxFixup,
+#else
+   .rx_fixup      = GobiNetDriverLteRxFixup,
+#endif
    .data          = BIT(8) | BIT(10) | BIT(BIT_9X15),
 #ifdef CONFIG_PM
 #if (LINUX_VERSION_CODE >= KERNEL_VERSION( 3,8,0 ))
@@ -2301,7 +1718,6 @@ static const struct usb_device_id GobiVIDPIDTable [] =
    {QMI_G3K_DEVICE(0x1199, 0x9019)},
    {QMI_G3K_DEVICE(0x03f0, 0x371d)},
    // 9x15
-   {QMI_9X15_DEVICE(0x1199, 0x9091)}, /* consider 9x50 same as 9x15 at the moment, change it later if needed */
    {QMI_9X15_DEVICE(0x1199, 0x9071)}, /* consider 9x30 same as 9x15 at the moment, change it later if needed */
    {QMI_9X15_DEVICE(0x1199, 0x68C0)},
    {QMI_9X15_DEVICE(0x1199, 0x9041)},
@@ -2315,14 +1731,6 @@ static const struct usb_device_id GobiVIDPIDTable [] =
    //9x30
    {QMI_9X15_DEVICE(0x1199, 0x9070)},
 
-   //AR759x
-   {QMI_9X15_DEVICE(0x1199, 0x9100)},
-   
-   //AR758x
-   {QMI_9X15_DEVICE(0x1199, 0x9102)},
-   
-   //AR758x
-   {QMI_9X15_DEVICE(0x1199, 0x9110)},
    //Terminating entry
    { }
 };
@@ -2344,75 +1752,37 @@ RETURN VALUE:
 
 void PrintCurrentUSBSpeed(struct usbnet * pDev)
 {
-   enum usb_device_speed {
-        USB_SPEED_UNKNOWN = 0,                  /* enumerating */
-        USB_SPEED_LOW, USB_SPEED_FULL,          /* usb 1.1 */
-        USB_SPEED_HIGH,                         /* usb 2.0 */
-        USB_SPEED_WIRELESS,                     /* wireless (usb 2.5) */
-        USB_SPEED_SUPER,                        /* usb 3.0 */
-   };
+    enum usb_device_speed {
+         USB_SPEED_UNKNOWN = 0,                  /* enumerating */
+         USB_SPEED_LOW, USB_SPEED_FULL,          /* usb 1.1 */
+         USB_SPEED_HIGH,                         /* usb 2.0 */
+         USB_SPEED_WIRELESS,                     /* wireless (usb 2.5) */
+         USB_SPEED_SUPER,                        /* usb 3.0 */
+    };
    switch(pDev->udev->speed)
     {
         case USB_SPEED_LOW:
-            printk(KERN_INFO"USB Speed : USB 1.0 SPEED LOW\n");
+            printk("USB Speed : USB 1.0 SPEED LOW\n");
             break;
         case USB_SPEED_FULL:
-            printk(KERN_INFO"USB Speed : USB 1.0 SPEED FULL\n");
+            printk("USB Speed : USB 1.0 SPEED FULL\n");
             break;
         case USB_SPEED_HIGH:
-            printk(KERN_INFO"USB Speed : USB 2.0\n");
+            printk("USB Speed : USB 2.0\n");
             break;
         case USB_SPEED_WIRELESS:
-            printk(KERN_INFO"USB Speed : USB 2.5\n");
+            printk("USB Speed : USB 2.5\n");
             break;
         case USB_SPEED_SUPER:
-            printk(KERN_INFO"USB Speed : USB 3.0\n");
+            printk("USB Speed : USB 3.0\n");
             break;
         case USB_SPEED_UNKNOWN:
         default:
-            printk(KERN_INFO"USB Speed : USB SPEED UNKNOWN\n");
+            printk("USB Speed : USB SPEED UNKNOWN\n");
             break;
     }
 }
 
-#if GOBI_WORK_QUEUE
-/*===========================================================================
-METHOD:
-   gobi_work_handler (Private Method)
-
-DESCRIPTION:
-   work queue worker handler
-
-PARAMETERS
-   w        [ I ] - Pointer to work_struct
-
-RETURN VALUE:
-    NULL
-===========================================================================*/
-static void gobi_work_handler(struct work_struct *w)
-{
-   struct delayed_work *dwork;
-   sGobiUSBNet *pGobiDev = NULL;
-   dwork = to_delayed_work(w);
-   pGobiDev = container_of(dwork, sGobiUSBNet, dw_reset);
-   if(pGobiDev!=NULL)
-   {
-      struct usb_interface *pIntf = pGobiDev->mpIntf;
-      if(pIntf->cur_altsetting->desc.bInterfaceNumber ==8)
-      {
-          //struct usb_device *udev;
-          //printk(KERN_INFO"Reset Device\n");
-          //udev = interface_to_usbdev(pIntf);
-          //usb_reset_device(udev);
-          printk(KERN_INFO"Work queue done\n");
-       }
-   }
-   else
-   {
-      DBG("pGobiDev NULL\n");
-   }
-}
-#endif
 
 /*===========================================================================
 METHOD:
@@ -2478,27 +1848,27 @@ int GobiUSBNetProbe(
    {
       DBG( "failed to get netdevice\n" );
       usbnet_disconnect( pIntf );
-      usb_set_intfdata(pIntf, NULL);
       return -ENXIO;
    }
-   usbnet_stop(pDev->net);
 
-   pGobiDev = kzalloc( sizeof( sGobiUSBNet ), GOBI_GFP_KERNEL );
+   pGobiDev = kzalloc( sizeof( sGobiUSBNet ), GFP_KERNEL );
    if (pGobiDev == NULL)
    {
       DBG( "falied to allocate device buffers" );
       usbnet_disconnect( pIntf );
-      usb_set_intfdata(pIntf, NULL);
       return -ENOMEM;
    }
-   atomic_set( &pGobiDev->mAutoPM.mURBListLen, 0 );
-   pGobiDev->tx_qlen  = 0;
-   pGobiDev->WDSClientID = (u16)-1;
-   pGobiDev->iDataMode = eDataMode_Ethernet;
+
    pDev->data[0] = (unsigned long)pGobiDev;
 
-   pGobiDev->iUSBState = USB_STATE_ATTACHED;
    pGobiDev->mpNetDev = pDev;
+
+#ifdef DATA_MODE_RP
+   pDev->net->flags |= IFF_NOARP;
+   printk(KERN_INFO "RawIP mode\n" );
+#else
+   printk(KERN_INFO "Ethernet mode\n" );
+#endif
 
    // Clearing endpoint halt is a magic handshake that brings 
    // the device out of low power (airplane) mode
@@ -2514,22 +1884,17 @@ int GobiUSBNetProbe(
    pDev->net->hard_start_xmit = GobiUSBNetStartXmit;
    pDev->net->tx_timeout = GobiUSBNetTXTimeout;
 #else
-   pNetDevOps = kmalloc( sizeof( struct net_device_ops ), GOBI_GFP_KERNEL );
+   pNetDevOps = kmalloc( sizeof( struct net_device_ops ), GFP_KERNEL );
    if (pNetDevOps == NULL)
    {
       DBG( "falied to allocate net device ops" );
       usbnet_disconnect( pIntf );
-      usb_set_intfdata(pIntf, NULL);
       return -ENOMEM;
    }
    memcpy( pNetDevOps, pDev->net->netdev_ops, sizeof( struct net_device_ops ) );
-   pDev->net->hard_header_len = 0;
 
    pGobiDev->mpUSBNetOpen = pNetDevOps->ndo_open;
    pNetDevOps->ndo_open = GobiUSBNetOpen;
-#ifdef FIX_RX_BUFFER
-   pNetDevOps->ndo_change_mtu = GobiUSBNetChangeMTU;
-#endif
    pGobiDev->mpUSBNetStop = pNetDevOps->ndo_stop;
    pNetDevOps->ndo_stop = GobiUSBNetStop;
 #ifdef TX_XMIT_SIERRA
@@ -2547,14 +1912,6 @@ int GobiUSBNetProbe(
        LINUX_VERSION_CODE <= KERNEL_VERSION( 3,10,39 ))
    pNetDevOps->ndo_start_xmit = gobi_usbnet_start_xmit_3_10_21;
    pNetDevOps->ndo_tx_timeout = gobi_usbnet_tx_timeout_3_10_21;
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION( 3,12,0 ) &&\
-          LINUX_VERSION_CODE < KERNEL_VERSION( 3,13,0 ))
-   pNetDevOps->ndo_start_xmit = gobi_usbnet_start_xmit_3_12_xx;
-   pNetDevOps->ndo_tx_timeout = gobi_usbnet_tx_timeout_3_12_xx;
-#elif (LINUX_VERSION_CODE >= KERNEL_VERSION( 4,4,0 ) &&\
-          LINUX_VERSION_CODE < KERNEL_VERSION( 4,5,0 ))
-   pNetDevOps->ndo_start_xmit = gobi_usbnet_start_xmit_4_4_xx;
-   pNetDevOps->ndo_tx_timeout = gobi_usbnet_tx_timeout_4_4_xx;
 #endif /* #if (LINUX_VERSION_CODE == KERNEL_VERSION( 2,6,31 ) */
 #else
    pNetDevOps->ndo_start_xmit = usbnet_start_xmit;
@@ -2571,7 +1928,7 @@ int GobiUSBNetProbe(
 #endif
 
    pGobiDev->mpIntf = pIntf;
-   memset( &(pGobiDev->mMEID), '0', MAX_DEVICE_MEID_SIZE );
+   memset( &(pGobiDev->mMEID), '0', 14 );
 
    /* change MAC addr to include, ifacenum, and to be unique */
    pGobiDev->mpNetDev->net->dev_addr[ETH_ALEN-1] = ifacenum;
@@ -2600,14 +1957,12 @@ int GobiUSBNetProbe(
    memset( &pGobiDev->mQMIDev, 0, sizeof( sQMIDev ) );
    pGobiDev->mQMIDev.mbCdevIsInitialized = false;
 
-   pGobiDev->mQMIDev.iInterfaceNumber = pIntf->cur_altsetting->desc.bInterfaceNumber;
    pGobiDev->mQMIDev.mpDevClass = gpClass;
 
 #ifdef CONFIG_PM
    init_completion( &pGobiDev->mAutoPM.mThreadDoWork );
    spin_lock_init(&pGobiDev->sSuspendLock);
    SetCurrentSuspendStat(pGobiDev, false);
-   //SetTxRxStat(pGobiDev, RESUME_RX_OKAY | RESUME_TX_OKAY);
 #endif /* CONFIG_PM */
    spin_lock_init( &pGobiDev->mQMIDev.mClientMemLock );
 
@@ -2617,8 +1972,6 @@ int GobiUSBNetProbe(
 #if (LINUX_VERSION_CODE < KERNEL_VERSION( 3,11,0 ))
    GobiSetDownReason( pGobiDev, NO_NDIS_CONNECTION );
    GobiSetDownReason( pGobiDev, NET_IFACE_STOPPED );
-#else
-   GobiSetDownReason( pGobiDev, NO_NDIS_CONNECTION );
 #endif
 
    // Register QMI
@@ -2626,58 +1979,18 @@ int GobiUSBNetProbe(
           test_bit(BIT_9X15, &pDev->driver_info->data)) {
        is9x15 = 1;
    }
-   sema_init( &(pGobiDev->taskIDSem), SEMI_INIT_DEFAULT_VALUE );
-   spin_lock_init(&(pGobiDev->urb_lock));
-   spin_lock_init(&(pGobiDev->notif_lock));
-   pGobiDev->task=NULL;
-   ClearTaskID(true,pGobiDev);
-   pGobiDev->mIs9x15= is9x15;
-   pGobiDev->mUsb_Interface = pIntf;
-   pGobiDev->iTaskID = 0;
-   if(pGobiDev->iTaskID>=0)
+   status = RegisterQMIDevice( pGobiDev, is9x15 );
+   if (status != 0)
    {
-      pGobiDev->task = kthread_run(&thread_function,(void *)pGobiDev,"GobiNetThread:%d Port:%d,Intf:%d",pGobiDev->iTaskID,
-         pDev->udev->portnum,pIntf->cur_altsetting->desc.bInterfaceNumber);
-      DBG(KERN_INFO"GobiNet Thread : %s %d:%d\n",pGobiDev->task->comm,pDev->udev->portnum,pIntf->cur_altsetting->desc.bInterfaceNumber);
-   }
-   else
-   {
-      DBG(KERN_INFO"GobiNet Thread : Error\n");
+      // usbnet_disconnect() will call GobiNetDriverUnbind() which will call
+      // DeregisterQMIDevice() to clean up any partially created QMI device
+      pGobiDev->mbQMIValid = false;
+      usbnet_disconnect( pIntf );
+      return status;
    }
    PrintCurrentUSBSpeed(pDev);
    // Success
    return 0;
-}
-
-
-void GobiUSBDisconnect(struct usb_interface *pIntf)
-{
-   sGobiUSBNet * pGobiDev;
-    struct usbnet * pDev;
-    DBG("GobiUSBDisconnect\n");
-    #if (LINUX_VERSION_CODE > KERNEL_VERSION( 2,6,23 ))
-    pDev = usb_get_intfdata( pIntf );
-    #else
-    pDev = (struct usbnet *)pIntf->dev.platform_data;
-    #endif
-    if(pDev==NULL)
-    {
-       DBG( "failed to get interface\n" );
-       return ;
-    }
-    else
-    {    
-       pGobiDev = (sGobiUSBNet *)pDev->data[0];
-       if (pGobiDev == NULL)
-       {
-          DBG( "failed to get QMIDevice\n" );
-          return;
-       }
-       pGobiDev->mbUnload = eStatUnloading;
-   }
-   usbnet_stop(pDev->net);//IPV6 lock error
-   usbnet_disconnect(pIntf);
-   usb_set_intfdata(pIntf, NULL);
 }
 
 static struct usb_driver GobiNet =
@@ -2685,7 +1998,7 @@ static struct usb_driver GobiNet =
    .name       = "GobiNet",
    .id_table   = GobiVIDPIDTable,
    .probe      = GobiUSBNetProbe,
-   .disconnect = GobiUSBDisconnect,
+   .disconnect = usbnet_disconnect,
 #ifdef CONFIG_PM
    .suspend    = GobiNetSuspend,
    .resume     = GobiNetResume,
@@ -2711,21 +2024,9 @@ RETURN VALUE:
    int - 0 for success
          Negative errno for error
 ===========================================================================*/
-bool isModuleUnload(sGobiUSBNet *    pDev)
-{
-   if(iModuleExit)
-      return true;
-   if(pDev!=NULL)
-   {
-      if(pDev->mbUnload != eStatRegister)
-         return true;
-   } 
-   return false;
-}
 static int __init GobiUSBNetModInit( void )
 {
    int i;
-   iModuleExit = 0;
    gpClass = class_create( THIS_MODULE, "GobiQMI" );
    if (IS_ERR( gpClass ) == true)
    {
@@ -2743,19 +2044,6 @@ static int __init GobiUSBNetModInit( void )
    for(i=0;i<MAX_QCQMI;i++)
        qcqmi_table[i] = 0;
 
-   #if _PROBE_LOCK_
-   sema_init( &taskLoading, SEMI_INIT_DEFAULT_VALUE );
-   up(&taskLoading);
-   #endif
-   
-   #if GOBI_WORK_QUEUE
-   gWorkQueue = create_workqueue("gobi");
-   if (!gWorkQueue)
-   {
-      DBG("Create Work Queue Failed\n");
-   }
-   #endif
-   
    return usb_register( &GobiNet );
 }
 module_init( GobiUSBNetModInit );
@@ -2773,106 +2061,9 @@ RETURN VALUE:
 ===========================================================================*/
 static void __exit GobiUSBNetModExit( void )
 {
-   iModuleExit = 1;
    usb_deregister( &GobiNet );
 
-   #if GOBI_WORK_QUEUE
-   if(gWorkQueue)
-   {
-      flush_workqueue(gWorkQueue);
-      destroy_workqueue(gWorkQueue);
-      gWorkQueue = NULL;
-   }
-   #endif
-
    class_destroy( gpClass );
-}
-/*===========================================================================
-METHOD:
-   SendWakeupControlMsg (Private Method)
-
-DESCRIPTION:
-   Send Devie Weak Up Message
-
-PARAMETERS
-   pIntf          [ I ] - Pointer to interface
-   oldPowerState  [ I ] - Old Power State
-
-RETURN VALUE:
-   NULL
-===========================================================================*/
-void SendWakeupControlMsg(
-   struct usb_interface * pIntf,
-   int oldPowerState)
-{
-   struct usbnet * pDev;
-   sGobiUSBNet * pGobiDev;
-   int nRet= 0;
-   if (pIntf == 0)
-   {
-      return ;
-   }
-   DBG("\n");
-#if (LINUX_VERSION_CODE > KERNEL_VERSION( 2,6,23 ))
-   pDev = usb_get_intfdata( pIntf );
-#else
-   pDev = (struct usbnet *)pIntf->dev.platform_data;
-#endif
-
-   if (pDev == NULL || pDev->net == NULL)
-   {
-      DBG( "failed to get netdevice\n" );
-      return ;
-   }
-
-   pGobiDev = (sGobiUSBNet *)pDev->data[0];
-   if (pGobiDev == NULL)
-   {
-      DBG( "failed to get QMIDevice\n" );
-      return ;
-   }
-   
-   #if defined(USB_INTRF_FUNC_SUSPEND) && defined(USB_INTRF_FUNC_SUSPEND_RW)
-   if ( pDev->udev->speed >= USB_SPEED_SUPER )
-   {
-      nRet = Gobi_usb_control_msg(pDev->udev, usb_sndctrlpipe(pDev->udev, 0),
-                               USB_REQ_SET_FEATURE, USB_RECIP_INTERFACE,
-                               USB_INTRF_FUNC_SUSPEND,
-                               pIntf->cur_altsetting->desc.bInterfaceNumber, /* two bytes in this field, suspend option(1 byte) | interface number(1 byte) */
-                               NULL, 0, USB_CTRL_SET_TIMEOUT);
-      if (nRet != 0)
-      {
-         DBG("[line:%d] send usb_control_msg failed!nRet = %d\n", __LINE__, nRet);
-      }
-   }
-   #endif
-
-   //USB/xhci: Enable remote wakeup for USB3 devices
-   nRet = Gobi_usb_control_msg(pDev->udev, usb_sndctrlpipe(pDev->udev, 0),
-                                         USB_REQ_CLEAR_FEATURE,
-                                                 USB_RECIP_DEVICE,
-                                         USB_DEVICE_REMOTE_WAKEUP, 
-                                         0,//Don't care about which interface
-                                         NULL, 
-                                         0,
-                                         USB_CTRL_SET_TIMEOUT);
-   if (nRet != 0)
-   {
-       DBG("[line:%d] send usb_control_msg failed!nRet = %d\n", __LINE__, nRet);
-   }
-   
-   // 9x30(EM74xx) needs this when resume
-   nRet = Gobi_usb_control_msg( pDev->udev,
-           usb_sndctrlpipe( pDev->udev, 0 ),
-           SET_CONTROL_LINE_STATE_REQUEST,
-           SET_CONTROL_LINE_STATE_REQUEST_TYPE,
-           CONTROL_DTR,
-           pIntf->cur_altsetting->desc.bInterfaceNumber,
-           NULL, 0, USB_CTRL_SET_TIMEOUT);
-   if (nRet != 0)
-   {
-       printk(KERN_INFO "fail at sending DTR during resume %d\n", nRet );
-   }
 }
 module_exit( GobiUSBNetModExit );
 
@@ -2895,7 +2086,4 @@ MODULE_PARM_DESC( interruptible, "Listen for and return on user interrupt" );
 module_param( txQueueLength, int, S_IRUGO | S_IWUSR );
 MODULE_PARM_DESC( txQueueLength, 
                   "Number of IP packets which may be queued up for transmit" );
-module_param( iTEEnable, int, S_IRUGO | S_IWUSR );
-MODULE_PARM_DESC( iTEEnable, "-1 : Ignore TE flow Control, 0 : TE Flow Control disabled, 1 : TE Flow Control enabled" );
-module_param( iRAWIPEnable, int, S_IRUGO | S_IWUSR );
-MODULE_PARM_DESC( iRAWIPEnable, "RAWIP enabled or not" );
+

@@ -107,21 +107,27 @@ POSSIBILITY OF SUCH DAMAGE.
 extern int debug;
 extern int qos_debug;
 // DBG macro
-#define DBG( format, arg... )\
-if(debug == 1)\
-{\
-      printk( KERN_INFO "GobiNet::%s(%d) " format, __FUNCTION__,task_pid_nr(current), ## arg );\
-}
-#define QDBG( format, arg... )\
-if(qos_debug == 1)\
-{\
-   printk( KERN_INFO "GobiNet[QoS]::%s " format, __FUNCTION__, ## arg );\
-}
+#define DBG( format, arg... ) \
+   if (debug == 1)\
+   { \
+      printk( KERN_INFO "GobiNet::%s " format, __FUNCTION__, ## arg ); \
+   }
+#define QDBG( format, arg... ) \
+   if (qos_debug == 1)\
+   { \
+      printk( KERN_INFO "GobiNet[QoS]::%s " format, __FUNCTION__, ## arg ); \
+   }
 
+/* EXPERIMENTAL feature
+ * The following definition is disabled (commented out) by default.
+ * When uncommented it enables configuring tx packet to QOS flow
+ * TODO packet filtering base on TFT indication
+ */
+/*#define QOS_MODE*/
 
 /* The following definition is disabled (commented out) by default.
  * When uncommented it enables raw IP data format mode of operation */
-/*#define DATA_MODE_RP*/
+#define DATA_MODE_RP
 
 #ifdef QOS_MODE
 #ifdef DATA_MODE_RP
@@ -135,19 +141,6 @@ if(qos_debug == 1)\
 #define QMIDMS 2
 #define QMIQOS 4
 #define QMIWDA 0x1A
-#define QMINAS   3
-#define QMIWMS   5
-#define QMIVOICE 9
-
-#define QMI_WMS_EVENT_REPORT_IND        0x01
-#define QMI_NAS_SERVING_SYSTEM_IND      0x24
-#define QMI_VOICE_ALL_CALL_STATUS_IND   0x2E
-#define QMI_WDS_GET_PKT_SRVC_STATUS_IND 0x22
-
-#define QMI_CTL_SYNC_IND 0x0027
-#define QMI_CTL_REQ 0x00
-#define QMI_CTL_RESP 0x01
-#define QMI_CTL_IND 0x02
 
 #define u8        unsigned char
 #define u16       unsigned short
@@ -173,29 +166,8 @@ if(qos_debug == 1)\
 // us (it polls at HZ/4 usually) before we report too many false errors.
 #define THROTTLE_JIFFIES   (HZ/8)
 #define RX_MAX_QUEUE_MEMORY (60 * 1518)
-#define TX_QLEN(dev) (((dev)->udev->speed == USB_SPEED_HIGH) ? \
-        (RX_MAX_QUEUE_MEMORY/(dev)->hard_mtu) : 4)
-
-#define SET_CONTROL_LINE_STATE_REQUEST_TYPE \
-       (USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE)
-#define SET_CONTROL_LINE_STATE_REQUEST             0x22
-#define CONTROL_DTR                     0x01
-#define CONTROL_RTS                     0x02
-
-#define MAX_TASK_ID 16
-
-//Register State
-enum {
-   eStatRegister=0,
-   eStatUnloading,
-   eStatUnloaded
-};
-
-/* The following definition is disabled (commented out) by default.
- * When uncommented it enables a feature that provides 'feedback' to an 
- * application about allocated and freed resources on transmit path  provided
- * CONFIG_PM is enabled in the kernel*/
-/*#define TX_URB_MONITOR*/
+#define	TX_QLEN(dev) (((dev)->udev->speed == USB_SPEED_HIGH) ? \
+			(RX_MAX_QUEUE_MEMORY/(dev)->hard_mtu) : 4)
 /*=========================================================================*/
 // Struct sQMUX
 //
@@ -294,7 +266,7 @@ u16 QMIDMSGetMEIDReqSize( void );
 u16 QMIDMSSWISetFCCAuthReqSize( void );
 
 // Get size of buffer needed for QMUX + QMIWDASetDataFormatReq
-u16 QMIWDASetDataFormatReqSize( int te_flow_control );
+u16 QMIWDASetDataFormatReqSize( void );
 
 // Get size of buffer needed for QMUX + QMICTLSetDataFormatReq
 u16  QMICTLSetDataFormatReqSize( void );
@@ -354,16 +326,13 @@ int QMIDMSSWISetFCCAuthReq(
 int QMIWDASetDataFormatReq(
    void *   pBuffer,
    u16      buffSize,
-   u16      transactionID,
-   int     te_flow_control,
-   int      iDataMode);
+   u16      transactionID );
 
 // Fill buffer with QMI CTL Set Data Format Request
 int QMICTLSetDataFormatReq(
    void *   pBuffer,
    u16      buffSize,
-   u8       transactionID ,
-   int      iDataMode);
+   u8       transactionID );
 
 int QMICTLSyncReq(
    void *pBuffer,
@@ -416,51 +385,15 @@ int QMIDMSGetMEIDResp(
 // Parse the QMI DMS Get Serial Numbers Resp
 int QMIWDASetDataFormatResp(
    void *   pBuffer,
-   u16      buffSize,
-   int      iDataMode);
+   u16      buffSize );
 
 // Parse the QMI Set Data Format Resp
 int QMICTLSetDataFormatResp(
    void *   pBuffer,
-   u16      buffSize,
-   int      iDataMode);
+   u16      buffSize);
 
 // Pasre the QMI CTL Sync Response
 int QMICTLSyncResp(
    void *pBuffer,
    u16  buffSize );
 
-// Get size of buffer needed for QMUX + QMICTLSetPowerSaveModeReq
-u16  QMICTLSetPowerSaveModeReqSize( void );
-
-// Fill buffer with QMI CTL Set Power Save Mode Request
-int QMICTLSetPowerSaveModeReq(
-   void *   pBuffer,
-   u16      buffSize,
-   u8       transactionID,
-   u8       mode);
-
-// Parse the QMI Set Power Save Mode Resp   
-int QMICTLSetPowerSaveModeResp(
-   void *   pBuffer,
-   u16      buffSize );
-int QMICTLConfigPowerSaveSettingsReq(
-   void *   pBuffer,
-   u16      buffSize,
-   u8       transactionID,
-   u8       service,
-   u8       indication);
-
-// Get size of buffer needed for QMUX + QMICTLPowerSaveSettingsReq
-u16 QMICTLConfigPowerSaveSettingsReqSize( void );
-// Parse the QMI Config Power Save Settings Resp      
-int QMICTLConfigPowerSaveSettingsResp(
-   void *   pBuffer,
-   u16      buffSize );
-enum{
-   eSKIP_TE_FLOW_CONTROL_TLV=-1,
-   eTE_FLOW_CONTROL_TLV_0=0,
-   eTE_FLOW_CONTROL_TLV_1=1,
-};
-#define GOBI_GFP_ATOMIC     GFP_ATOMIC|GFP_NOWAIT
-#define GOBI_GFP_KERNEL     GFP_KERNEL|GFP_NOWAIT

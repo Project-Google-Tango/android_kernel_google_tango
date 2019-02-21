@@ -669,7 +669,7 @@ FIXED_REG(12,	vdd_hdmi_5v0,	vdd_hdmi_5v0,
 
 FIXED_REG(15,	ti913_gpio2,	ti913_gpio2,
 	NULL,	1,	1,	PALMAS_TEGRA_GPIO_BASE + PALMAS_GPIO2,
-	false,	true,	0,	3300, 0);
+	false,	true,	1,	3300, 0);
 
 FIXED_REG(16,	ti913_gpio3,	ti913_gpio3,
 	NULL,	0,	0,	PALMAS_TEGRA_GPIO_BASE + PALMAS_GPIO3,

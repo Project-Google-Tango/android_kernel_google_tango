@@ -537,13 +537,6 @@ static struct tegra_usb_platform_data tegra_ehci3_utmi_pdata = {
 	},
 };
 
-/* GPIO usage for Bruce modem */
-static struct gpio modem_gpios[] = {
-	{MODEM_EN, GPIOF_OUT_INIT_HIGH, "MODEM EN"},
-	{MDM_RST, GPIOF_OUT_INIT_HIGH, "MODEM RESET"},
-	{MDM_SAR0, GPIOF_OUT_INIT_LOW, "MODEM SAR0"},
-};
-
 static struct tegra_usb_platform_data tegra_ehci2_hsic_baseband_pdata = {
 	.port_otg = false,
 	.has_hostpc = true,
@@ -627,63 +620,13 @@ static void ardbeg_xusb_init(void)
 		xusb_pdata.portmap |= TEGRA_XUSB_HSIC_P1;
 }
 
-static int baseband_init(void)
-{
-	int ret;
-
-	ret = gpio_request_array(modem_gpios, ARRAY_SIZE(modem_gpios));
-	if (ret) {
-		pr_warn("%s:gpio request failed\n", __func__);
-		return ret;
-	}
-
-	/* enable pull-down for MDM_COLD_BOOT */
-	tegra_pinmux_set_pullupdown(TEGRA_PINGROUP_ULPI_DATA4,
-				    TEGRA_PUPD_PULL_DOWN);
-
-	/* Release modem reset to start boot */
-	gpio_set_value(MDM_RST, 1);
-
-	/* export GPIO for user space access through sysfs */
-	gpio_export(MDM_RST, false);
-	gpio_export(MDM_SAR0, false);
-
-	return 0;
-}
-
-static const struct tegra_modem_operations baseband_operations = {
-	.init = baseband_init,
-};
-
-static struct tegra_usb_modem_power_platform_data baseband_pdata = {
-	.ops = &baseband_operations,
-	.regulator_name = "vdd_wwan_mdm",
-	.wake_gpio = -1,
-	.boot_gpio = MDM_COLDBOOT,
-	.boot_irq_flags = IRQF_TRIGGER_RISING |
-				    IRQF_TRIGGER_FALLING |
-				    IRQF_ONESHOT,
-	.autosuspend_delay = 1000,
-	.short_autosuspend_delay = 1000,
-	.tegra_ehci_device = &tegra_ehci2_device,
-	.tegra_ehci_pdata = &tegra_ehci2_hsic_baseband_pdata,
-};
-
-static struct platform_device icera_bruce_device = {
-	.name = "tegra_usb_modem_power",
-	.id = -1,
-	.dev = {
-		.platform_data = &baseband_pdata,
-	},
-};
-
 static void ardbeg_modem_init(void)
 {
-	int modem_id = tegra_get_modem_id();
-	pr_info("%s: modem_id = %d\n", __func__, modem_id);
+	tegra_ehci2_device.dev.platform_data =
+		 &tegra_ehci2_hsic_baseband_pdata;
 
 	tegra_set_wake_source(42, INT_USB2);
-	platform_device_register(&icera_bruce_device);
+	platform_device_register(&tegra_ehci2_device);
 }
 
 #ifdef CONFIG_USE_OF

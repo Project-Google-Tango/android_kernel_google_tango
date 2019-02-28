@@ -17,7 +17,7 @@
   Whom based his on the Keyspan driver by Hugh Blemings <hugh@blemings.org>
 */
 /* Uncomment to log function calls */
-/* #define DEBUG 
+#define DEBUG 
 /* Uncomment to force power level set to auto when attaching a device */
 /* #define POWER_LEVEL_AUTO*/
 
@@ -131,7 +131,6 @@ static int is_qmi_gobi_device(struct usb_device *udev)
 {
 	switch (udev->descriptor.idProduct)
 	{
-        case 0x9070: /* EM/MC74xx boot */
         case 0x9071: /* EM/MC74xx app */
         case 0x9040: /* Gobi 5K QDL */
 	    case 0x9041: /* Gobi 5K */

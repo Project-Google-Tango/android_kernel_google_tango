@@ -651,6 +651,10 @@ static void ardbeg_xusb_init(void)
 			 TEGRA_XUSB_SS_P0);
 
 	if (!(usb_port_owner_info & UTMI2_PORT_OWNER_XUSB))
+		xusb_pdata.portmap &= ~(TEGRA_XUSB_USB2_P2 |
+			 TEGRA_XUSB_USB2_P1 | TEGRA_XUSB_SS_P0);
+
+	if (!(usb_port_owner_info & UTMI2_PORT_OWNER_XUSB))
 		 xusb_pdata.portmap &= ~(TEGRA_XUSB_USB2_P1 |
 			 TEGRA_XUSB_USB2_P2 | TEGRA_XUSB_SS_P1);
 
